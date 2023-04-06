@@ -1,0 +1,5 @@
+.lib/
+*.log
+.idea/
+target/
+Cargo.lock
