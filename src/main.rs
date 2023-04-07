@@ -74,8 +74,10 @@ fn main() {
 
 mod std_set {
     use std::fs::{File, remove_file};
-    use std::io::{Error, Write};
+    use std::io::{Error, ErrorKind, Write};
     use std::{io, panic};
+    use std::alloc::System;
+    use std::fmt::format;
     use std::mem::transmute;
     use std::os::windows::io::{AsRawHandle, IntoRawHandle};
     use std::panic::catch_unwind;
@@ -83,6 +85,7 @@ mod std_set {
     use std::ptr::hash;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use std::thread::Result;
+    use encoding_rs::mem::check_utf8_for_latin1_and_bidi;
     use windows::h;
     use windows::Win32::Storage::FileSystem::{CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_READ};
     use windows::Win32::System::Console::{GetStdHandle, SetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_OUTPUT_HANDLE};
@@ -153,23 +156,28 @@ mod std_set {
         }
     }
     unsafe fn check(from_std:&STD_HANDLE, other:&HANDLE) -> std::result::Result<HANDLE, Error> {
-        for (i, (_,org)) in HANDLERS_ORG.iter().enumerate() {
+        let mut found = false;
+        for (i, (std,org)) in HANDLERS_ORG.iter().enumerate() {
             if org.0 ==  other.0 {
                 HANDLERS_ORG.remove(i);
                 HANDLERS_ORG.push((*from_std,*other));
                 return Ok(*other);
             }
+            if from_std.0 == std.0 {
+                print!("found");
+                found = true;
+            }
         }
-        { // fixme: not work always
-            let std = GetStdHandle(*from_std)?;
+        if found {
+            let std = GetStdHandle(*from_std).unwrap();
             if !std.is_invalid() {
-                return  Err(system_err_or(format!("std handle {} is not invalid", from_std.0)));
+                return Err(system_err_or(format!("std handle {} is not invalid", from_std.0)));
             }
         }
         Ok(*other)
     }
     unsafe fn set(from_std:&STD_HANDLE, other:&HANDLE) -> Results<()> {
-        let other = check(from_std, other)?;
+        let other = check(from_std, other).unwrap();
         if !SetStdHandle(*from_std, other).as_bool() {
             Err(system_err_or(format!("set std handle {} failed", from_std.0)).into())
         } else {
@@ -236,19 +244,43 @@ mod std_set {
             };
         }).unwrap();
     }) }
+    static mut REC:bool = false;
 
-    pub fn close() {
+    pub fn close() -> Results<()> {
         unsafe {
-            for handler in HANDLERS.iter() {
+            if !REC {
+                return Err(Error::new(ErrorKind::PermissionDenied,
+                    "close in recovery before"
+                ).into())
+            }
+            REC = false;
+            let handlers_existing:Vec<HANDLE> = HANDLERS_ORG.iter()
+                .map(|(std,_)| std)
+                .map(|std| GetStdHandle(*std))
+                .filter_map(|it| it.ok())
+                .filter(|it| it.is_invalid())
+                .collect();
+            for (i,handler) in HANDLERS.iter().enumerate() {
+                for std in handlers_existing.iter() {
+                    if std.0 == handler.0 {
+                        return Err(Error::new(ErrorKind::PermissionDenied,
+                            format!("close in recovery before : {} ", std.0)
+                        ).into())
+                    }
+                }
                 CloseHandle(*handler).unwrap();
+                HANDLERS.remove(i);
             }
         }
+        Ok(())
     }
     pub fn recovery() {
         unsafe {
-            for (from_std,handler) in HANDLERS_ORG.iter() {
+            for (i,(from_std,handler)) in HANDLERS_ORG.iter().enumerate() {
                 SetStdHandle(*from_std, *handler);
+                HANDLERS_ORG.remove(i);
             }
+            REC = true;
         }
     }
 }
