@@ -1,7 +1,7 @@
 use std::io::Error;
 use std::process::{Command, exit, Stdio};
 use windows::core::PCWSTR;
-use crate::exit::{show};
+use crate::exit::{show_};
 use crate::kotlin::ScopeFunc;
 use crate::std_set::{close, recovery};
 
@@ -17,12 +17,14 @@ fn convert(s: String) -> Results<PCWSTR> {
 fn main() {
     println!("stdout");
     std_set::init().unwrap();
-    println!("file stdout");
-    close();
-    println!("yield files"); //panic here
-    recovery();
-    exit::show(Error::new(std::io::ErrorKind::Other, "hello error"));
-    exit::if_check_utf8();
+    close().unwrap();
+    // panic!("here");
+    // println!("file stdout");
+    // close().unwrap();
+    // println!("yield files"); //panic here
+    // recovery();
+    // exit::show(Error::new(std::io::ErrorKind::Other, "hello error"));
+    // exit::if_check_utf8();
     println!("exit now");
     exit(0);
 
@@ -40,7 +42,7 @@ fn main() {
         // .unwrap();
         .spawn()
         .map_err(|e| {
-            exit(show(e).unwrap().0);
+            exit(show_(e).unwrap().0);
         })
         .unwrap();
     // out.wait().unwrap();
@@ -79,7 +81,7 @@ mod std_set {
     use std::alloc::System;
     use std::fmt::format;
     use std::mem::transmute;
-    use std::os::windows::io::{AsRawHandle, IntoRawHandle};
+    use std::os::windows::io::{AsRawHandle, IntoRawHandle, RawHandle};
     use std::panic::catch_unwind;
     use std::path::Path;
     use std::ptr::hash;
@@ -156,22 +158,20 @@ mod std_set {
         }
     }
     unsafe fn check(from_std:&STD_HANDLE, other:&HANDLE) -> std::result::Result<HANDLE, Error> {
-        let mut found = false;
-        for (i, (std,org)) in HANDLERS_ORG.iter().enumerate() {
-            if org.0 ==  other.0 {
+        for (i, (_,org)) in HANDLERS_ORG.iter().enumerate() {
+            if !org.is_invalid() && !other.is_invalid() && org.0 ==  other.0 {
                 HANDLERS_ORG.remove(i);
                 HANDLERS_ORG.push((*from_std,*other));
                 return Ok(*other);
             }
-            if from_std.0 == std.0 {
-                print!("found");
-                found = true;
-            }
         }
-        if found {
+        {
             let std = GetStdHandle(*from_std).unwrap();
-            if !std.is_invalid() {
+            println!("handler {:?}",std);
+            if std.is_invalid() {
                 return Err(system_err_or(format!("std handle {} is not invalid", from_std.0)));
+            } else {
+                HANDLERS_ORG.push((*from_std,std))
             }
         }
         Ok(*other)
@@ -212,11 +212,16 @@ mod std_set {
 
             let hook = panic::take_hook();
             panic::set_hook(Box::new(move |info| {
-                close();
-                writeln!(&panic_file, "{}", info).unwrap();
+                println!("panichs");
+                let sys_err = Error::last_os_error();
+                let err_info = format!(
+                    "panic by : {} \nmore:\nlast system error : {}", info,sys_err
+                );
+                writeln!(&panic_file, "{}", &err_info).unwrap();
                 recovery();
+                eprintln!("{}",&err_info);
                 hook(info);
-                exit::after_show(Error::last_os_error());
+                exit::show_err_(err_info).unwrap();
                 exit(-1);
             }));
         }).map_err(|e| e.downcast::<Error>().unwrap().into())
@@ -236,10 +241,6 @@ mod std_set {
         catch_unwind(|| {
             unsafe {
                 set_by_file(&STD_OUTPUT_HANDLE, out.out().unwrap()).unwrap();
-            };
-        }).unwrap();
-        catch_unwind(|| {
-            unsafe {
                 set_by_file(&STD_ERROR_HANDLE, out.err().unwrap()).unwrap();
             };
         }).unwrap();
@@ -248,38 +249,62 @@ mod std_set {
 
     pub fn close() -> Results<()> {
         unsafe {
-            if !REC {
-                return Err(Error::new(ErrorKind::PermissionDenied,
-                    "close in recovery before"
-                ).into())
+            // if !REC {
+            //     return Err(Error::new(ErrorKind::PermissionDenied,
+            //         "close in recovery before"
+            //     ).into())
+            // }
+            // REC = false;
+            // ramdom handler
+
+
+            let mut handlers_existing:Vec<HANDLE> = vec![];
+            for (std,_) in HANDLERS_ORG.iter() {
+                let the_handler = GetStdHandle(*std)?;
+                if !the_handler.is_invalid() {
+                    handlers_existing.push(the_handler);
+                }
             }
-            REC = false;
-            let handlers_existing:Vec<HANDLE> = HANDLERS_ORG.iter()
-                .map(|(std,_)| std)
-                .map(|std| GetStdHandle(*std))
-                .filter_map(|it| it.ok())
-                .filter(|it| it.is_invalid())
-                .collect();
-            for (i,handler) in HANDLERS.iter().enumerate() {
-                for std in handlers_existing.iter() {
-                    if std.0 == handler.0 {
-                        return Err(Error::new(ErrorKind::PermissionDenied,
-                            format!("close in recovery before : {} ", std.0)
-                        ).into())
+            // println!("handlers_existing: {:?}", handlers_existing);
+            // println!("handlersssss: {:?}", HANDLERS);
+            // let hs = hs.as_mut_slice();
+            for filed in handlers_existing {
+                println!("handlers: {:?} start {:?} ", HANDLERS, filed);
+                for it in HANDLERS.iter() {
+                    println!("inside fors");
+                    catch_unwind(||{
+                        println!("inside unwind,{:?}", filed);
+                        let a = CloseHandle(filed);
+                        println!("after close ");
+                            a
+                            .inspect(|it| println!("close handle: {:?}", it))
+                            .as_bool()
+                            .inspect(|it| println!("close handle: {:?}", it));
+                    }).transform(|it| {
+                        println!("inside transform: {:?}", it);
+                        it.is_ok()
+                    });
+                    if it.0 == filed.0  {
+                        HANDLERS.retain(|removes| it.0 == removes.0);
                     }
                 }
-                CloseHandle(*handler).unwrap();
-                HANDLERS.remove(i);
+                println!("handlers: {:?} after {:?} ", HANDLERS, filed);
             }
+            println!("handlers end ---: {:?}", HANDLERS);
         }
         Ok(())
     }
     pub fn recovery() {
         unsafe {
-            for (i,(from_std,handler)) in HANDLERS_ORG.iter().enumerate() {
-                SetStdHandle(*from_std, *handler);
-                HANDLERS_ORG.remove(i);
-            }
+            let closable =  HANDLERS_ORG.clone();
+            let closable = closable
+                .iter()
+                .filter(|(it,to)|
+                    !SetStdHandle(*it, *to).as_bool()
+                );
+            HANDLERS_ORG.clear();
+            HANDLERS_ORG.extend(closable);
+            println!("recovery, handlers: {:?} ", HANDLERS_ORG);
             REC = true;
         }
     }
@@ -293,11 +318,14 @@ mod exit {
     use crate::{convert, Results};
     use crate::kotlin::ScopeFunc;
 
-    pub fn show(err:Error) -> Results<MESSAGEBOX_RESULT> {
-        message_box(format!("Error: {}", err), "错误".to_string(), MB_OK | MB_ICONERROR)
+    pub fn show_err_(msg:String) -> Results<MESSAGEBOX_RESULT> {
+        message_box(msg, "错误".to_string(), MB_OK | MB_ICONERROR)
+    }
+    pub fn show_(err:Error) -> Results<MESSAGEBOX_RESULT> {
+        show_err_(format!("Error: {}", err))
     }
     pub fn after_show(err:Error) {
-        show(err).unwrap();
+        show_(err).unwrap();
         exit(-1);
     }
     pub fn if_check_utf8() {
@@ -306,10 +334,10 @@ mod exit {
             // .stdout(Stdio::inherit())
             .output();
         if let Err(err) = utf8 {
-            exit(show(err).unwrap().0);
+            exit(show_(err).unwrap().0);
         } else if let Ok(utf8) = utf8 {
             if !utf8.status.success() {
-                exit(show(Error::last_os_error()).unwrap().0);
+                exit(show_(Error::last_os_error()).unwrap().0);
             }
         }
     }
