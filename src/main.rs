@@ -1,10 +1,16 @@
+mod redirections;
+mod var;
+
 use std::io::Error;
 use std::process::{Command, exit, Stdio};
 use windows::core::PCWSTR;
+use windows::{s, w};
+use windows::Win32::Storage::FileSystem::{CreateFileA, CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING};
+use windows::Win32::System::Console::{SetConsoleOutputCP, WriteConsoleOutputW, WriteConsoleW};
 use crate::exit::{show_};
 use crate::kotlin::ScopeFunc;
+use crate::redirections::get_os_file_handle;
 use crate::std_set::{close, recovery};
-
 
 type Results<T> = Result<T,Box<dyn std::error::Error>>;
 
@@ -16,7 +22,38 @@ fn convert(s: String) -> Results<PCWSTR> {
 
 fn main() {
     println!("stdout");
-    std_set::init().unwrap();
+    // exit::if_check_utf8();
+    // std_set::init().unwrap();
+    println!("•◘▬¨ŤlCęół♥☺☻0");
+    unsafe {
+        SetConsoleOutputCP(936 ).unwrap();
+        println!("•◘▬¨ŤlCęół♥☺☻0");
+        let h_console = CreateFileW(
+            w!("CONOUT$"),
+            FILE_GENERIC_WRITE.0,
+            FILE_SHARE_MODE(0),
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        ).unwrap();
+        s!("hello").transform(|a| WriteConsoleW(h_console, a.as_bytes(), None, None).unwrap());
+        w!("hello").transform(|a| WriteConsoleW(h_console, a.to_hstring().unwrap().to_string().into_bytes().as_slice(), None, None).unwrap());
+        w!("hello").transform(|a| WriteConsoleW(h_console, a.to_hstring().unwrap().to_string().into_bytes().as_slice(), None, None).unwrap());
+        w!("hello").transform(|a| WriteConsoleW(h_console, a.to_hstring().unwrap().to_string().into_bytes().as_slice(), None, None).unwrap());
+        let text = "aaaaaaa".to_string()
+            .encode_utf16().chain(Some(0))
+            .map(|a| a as u8)
+            .collect::<Vec<u8>>();
+        WriteConsoleW(h_console, &text, None, None).unwrap()
+            .transform(|a| ());
+        ;
+        WriteConsoleW(h_console, &text, None, None).unwrap();
+        WriteConsoleW(h_console, &text, None, None).unwrap();
+        WriteConsoleW(h_console, &text, None, None).unwrap();
+        WriteConsoleW(h_console, &text, None, None).unwrap();
+        exit(0)
+    }
     close().unwrap();
     // panic!("here");
     // println!("file stdout");
