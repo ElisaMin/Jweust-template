@@ -1,37 +1,32 @@
-mod redirections;
+mod logs;
 mod var;
 mod jvm;
 
-use std::io::Error;
-use std::process::{Command, exit, Stdio};
-use windows::core::PCWSTR;
-use windows::{s, w};
-use windows::Win32::Storage::FileSystem::{CreateFileA, CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING};
-use windows::Win32::System::Console::{SetConsoleOutputCP, WriteConsoleOutputW, WriteConsoleW};
-use crate::exit::{show_};
-use crate::kotlin::ScopeFunc;
-use crate::redirections::get_os_file_handle;
-use crate::std_set::{close, recovery};
+
+use std::process::{exit};
+use windows::core::{ HSTRING, PCWSTR};
+use crate::exit::{if_check_utf8};
+use crate::logs::hook_panic;
 
 type Results<T> = Result<T,Box<dyn std::error::Error>>;
-
-fn convert(s: String) -> Results<PCWSTR> {
-    let w: Vec<u16> = s.encode_utf16().chain(Some(0)).collect();
-    PCWSTR::from_raw(w.as_ptr())
-        .transform(Ok)
+fn wstr(s: String) -> (HSTRING, PCWSTR) {
+    let h = HSTRING::from(s);
+    let w = PCWSTR::from_raw(h.as_ptr());
+    (h, w)
 }
 
 fn main() {
-
+    if_check_utf8();
+    hook_panic();
 }
 
 mod exit {
     use std::io::Error;
     use std::process::{Command, exit};
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW, wsprintfW};
-    use crate::{convert, Results};
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW};
     use crate::kotlin::ScopeFunc;
+    use crate::{Results, wstr};
 
     pub fn show_err_(msg:String) -> Results<MESSAGEBOX_RESULT> {
         message_box(msg, "错误".to_string(), MB_OK | MB_ICONERROR)
@@ -57,18 +52,17 @@ mod exit {
         }
     }
     pub fn message_box(message:String, title:String, u_type:MESSAGEBOX_STYLE) -> Results<MESSAGEBOX_RESULT> {
+        let title = wstr(title);
+        let message = wstr(message);
         unsafe {
-            let message = convert(message)?;
-            println!("{:?}", message);
             MessageBoxW(
                 HWND::default(),
-                message,
-                convert(title)?,
+                message.1,
+                title.1,
                 u_type
             ).transform(Ok)
         }
     }
-
 }
 
 
@@ -78,6 +72,5 @@ mod kotlin {
         fn modify<F>(mut self, f: F) -> Self where F: FnOnce(&mut Self), { f(&mut self);self }
         fn inspect<F>(self, f: F) -> Self where F: FnOnce(&Self), { f(&self);self }
     }
-
     impl<T> ScopeFunc for T {}
 }

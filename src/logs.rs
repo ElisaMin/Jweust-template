@@ -1,6 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::{io, panic};
-use std::io::Write;
+use std::fmt::write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use chrono::Local;
 use once_cell::sync::Lazy;
@@ -25,6 +26,7 @@ fn open_log_(data:&str,is_prefix:bool) -> io::Result<File> {
     OpenOptions::new()
         .write(true)
         .create(true)
+        .append(true)
         .open(path)
 }
 #[inline]
@@ -53,8 +55,8 @@ pub fn hook_panic() {
     let hook_before = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let mut file = file_panic(None).unwrap();
-        let info = format!("new panic at : {}.\n info:\n {:?}\n\n",Local::now().format(TIME_FORMAT), panic_info);
-        file.write(info.as_bytes()).unwrap();
+        let info = format!("new panic:\ninfo:\ntime:{},{:?}\n\n",Local::now().format(TIME_FORMAT), panic_info);
+        file.write_all(info.as_bytes()).unwrap();
         file.flush().unwrap();
         exit::show_err_(info).unwrap();
         hook_before(panic_info);

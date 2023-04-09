@@ -7,7 +7,6 @@ use std::panic;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, exit, Stdio};
 use windows::core::{PCWSTR};
-use crate::show_and_exit_with;
 use crate::var::*;
 
 
@@ -75,17 +74,11 @@ impl JvmError {
 
 
 impl Debug for JvmError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { JvmError::fmt(self, f) }
 }
-
 impl Display for JvmError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { JvmError::fmt(self, f) }
 }
-
 impl std::error::Error for JvmError {}
 
 
@@ -177,26 +170,7 @@ impl Jvm {
 
     // log
     fn log(& self,mut process: Child) {
-        let process_err = panic::catch_unwind(||{
-            LOG_STDOUT_PATH.map(|path| {
-                let file = File::create(path).unwrap();
-            });
-            let file = file!("log.txt");
-            ;
-            process.try_wait().unwrap().unwrap()
-        });
 
-        if let Ok(code) = process_err {
-            if !code.success() {
-                exit()
-                
-            }
-        }
-
-        }
-        if process_err.is_err() {
-            println!("Error: {}", process_err.err().unwrap());
-        }
     }
 
     pub fn invoke(&self) {
