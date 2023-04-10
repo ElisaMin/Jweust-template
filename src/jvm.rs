@@ -3,47 +3,49 @@ use std::env::{args, var};
 use std::fmt::{Debug, Display, Formatter, write};
 use std::fs::{File};
 use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
-use std::panic;
+use std::{io, panic, thread};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, exit, Stdio};
-use windows::core::{PCWSTR};
+use crate::logs::{LogFile};
+use crate::{logs, Results};
+use crate::kotlin::ScopeFunc;
 use crate::var::*;
+use std::os::windows::process::CommandExt;
 
 
 /**
 var.rs
-pub static INCLUDE_JAR:bool = false;
-pub static APPLICATION_TYPE_IS_NO_CMD:bool = true;
-pub static WORKDIR:&'static str = ".";
-pub static WORKDIR_IS_VARIABLE:bool = false;
+pub const INCLUDE_JAR:bool = false;
+pub const APPLICATION_TYPE_IS_NO_CMD:bool = true;
+pub const WORKDIR:&str = ".";
+pub const WORKDIR_IS_VARIABLE:bool = false;
 
-pub static LOG_ERROR_PATH:Option<&'static str> = Some("error.log");
-pub static LOG_ERROR_IS_OVERWRITE:bool = false;
-pub static LOG_STDOUT_PATH:Option<&'static str> = None;
-pub static LOG_STDOUT_IS_OVERWRITE:bool = false;
+pub const LOG_STDERR_PATH:Option<(Option<&'static str>,bool)> = Some((None,false));
+pub const LOG_STDOUT_PATH:Option<(Option<&'static str>,bool)> = None;
 
-pub static JAR_FILES:&[&'static str] = &["path/to/jar"];
-pub static JAR_LAUNCHER_FILE:usize = 0;
-pub static JAR_LAUNCHER_MAIN_CLASS:Option<&'static str> = Some("tools.heizi.ast.Main");
-pub static JAR_LAUNCHER_ARGS:&[(i32,&'static str)] = &[(0,"-a"),(i32::MAX,"-c")];
-pub static EXE_IS_INSTANCE:bool = true;
-pub static EXE_IS_X86:bool = false;
-pub static EXE_PERMISSION:i8 = -1;
-pub static EXE_ICON_PATH:Option<&'static str> = Some("icon.ico");
-pub static EXE_FILE_VERSION:&'static str = "0.0.1";
-pub static EXE_PRODUCT_VERSION:&'static str = "0.0.0";
-pub static EXE_INTERNAL_NAME:&'static str = "Android apk Sideload Tool From Heizi Flash Tools";
-pub static EXE_FILE_DESCRIPTION:&'static str = "线刷APK安装工具";
-pub static EXE_LEGAL_COPYRIGHT:&'static str = "Github/ElisaMin";
-pub static EXE_COMPANY_NAME:&'static str = "Heizi";
+pub const JAR_FILES:&[&str] = &["path/to/jar"];
+pub const JAR_LAUNCHER_FILE:usize = 0;
+pub const JAR_LAUNCHER_MAIN_CLASS:Option<&str> = Some("tools.heizi.ast.Main");
+pub const JAR_LAUNCHER_ARGS:&[(i32,&str)] = &[(0,"-a"),(i32::MAX,"-c")];
 
-pub static JRE_SEARCH_DIR:&[&'static str] = &["./lib/runtime"];
-pub static JRE_SEARCH_ENV:&[&'static str] = &["JAVA_HOME"];
-pub static JRE_OPTIONS:&[&'static str] = &[];
-pub static JRE_NATIVE_LIBS:&[&'static str] = &[];
-pub static JRE_VERSION:&[&'static str] = &["19.0"];
-pub static JRE_PREFERRED:&'static str = "DefaultVM";
-pub static SPLASH_SCREEN_IMAGE_PATH:Option<&'static str> = Some("path/toImage");
+pub const EXE_IS_INSTANCE:bool = true;
+pub const EXE_IS_X86:bool = false;
+pub const EXE_PERMISSION:i8 = -1;
+pub const EXE_ICON_PATH:Option<&str> = Some("icon.ico");
+pub const EXE_FILE_VERSION:&str = "0.0.1";
+pub const EXE_PRODUCT_VERSION:&str = "0.0.0";
+pub const EXE_INTERNAL_NAME:&str = "Android apk Sideload Tool From Heizi Flash Tools";
+pub const EXE_FILE_DESCRIPTION:&str = "线刷APK安装工具";
+pub const EXE_LEGAL_COPYRIGHT:&str = "Github/ElisaMin";
+pub const EXE_COMPANY_NAME:& str = "Heizi";
+
+pub const JRE_SEARCH_DIR:&[&str] = &["./lib/runtime"];
+pub const JRE_SEARCH_ENV:&[&str] = &["JAVA_HOME"];
+pub const JRE_OPTIONS:&[&str] = &[];
+pub const JRE_NATIVE_LIBS:&[&str] = &[];
+pub const JRE_VERSION:&[&str] = &["19.0"];
+pub const JRE_PREFERRED:& str = "DefaultVM";
+pub const SPLASH_SCREEN_IMAGE_PATH:Option<&'static str> = Some("path/toImage");
 
  */
 
@@ -124,7 +126,7 @@ impl Jvm {
         }
         // get main file and drop it out from FILES
         {
-            let mut jars = JAR_FILES.iter().map(|&s|s).collect::<Vec<&str>>();
+            let mut jars = JAR_FILES.to_vec();
             if jars.is_empty() && JAR_LAUNCHER_MAIN_CLASS.is_none() {
                 panic!("No jar files or main class defined");
             }
@@ -167,26 +169,78 @@ impl Jvm {
 
         command_args
     }
-
-    // log
-    fn log(& self,mut process: Child) {
-
+    #[inline]
+    fn get_file_by_log(data:Option<(Option<&str>,bool)>,log:&str) -> io::Result<Option<File>> {
+        if let Some((name_or,overwrite)) = data {
+            let s = if let Some(name) = name_or {
+                PathBuf::from(name).as_log_file(overwrite)
+            } else {
+                log.as_log_file(overwrite)
+            }.unwrap();
+            s.transform(Some).transform(Ok)
+        } else {
+            Ok(None)
+        }
     }
 
-    pub fn invoke(&self) {
+    pub fn invoke(&self) -> Results<()> {
 
         // command prepare
-        let mut command = std::process::Command::new(self.path.join("bin").join("java.exe"));
+        let mut command = Command::new(self.path.join("bin").join("java.exe"));
+        // workdir
         command.current_dir(WORKDIR);
-        command.args(JAR_FILES.iter().map(|&path| "-jar".to_string()).chain(
-            JAR_FILES.iter().map(|&path| path.to_string())
-        ));
+        command.args(self.command_args());
+        // set env
+        // for (k,v) in JRE_ENVS {
+        //     command.env(k,v);
+        // }
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        let command = command.spawn()?;
+        self._next(command)?;
+
+        // set log
+        Ok(())
+    }
+    fn _next(&self, mut command:Child) -> Results<()> {
+        if let Some(stdout) = command.stdout.take() {
+            thread::spawn(move || {
+                let mut log = Self::get_file_by_log(LOG_STDOUT_PATH, "log").unwrap();
+                BufReader::new(stdout).lines().for_each(|line| {
+                    let line = line.unwrap();
+                    println!("{}", line);
+                    if let Some(log) = log.as_mut() {
+                        log.write_all(line.as_bytes()).unwrap();
+                    }
+                });
+            });
+        }
+        if let Some(stderr) = command.stderr.take() {
+            thread::spawn(move || {
+                let mut log = Self::get_file_by_log(LOG_STDOUT_PATH, "err").unwrap();
+                BufReader::new(stderr).lines().for_each(|line| {
+                    let line = line.unwrap();
+                    eprintln!("{}", line);
+                    if let Some(log) = log.as_mut() {
+                        log.write_all(line.as_bytes()).unwrap();
+                    }
+                });
+
+            });
+        }
+        let exit_code = command.wait_with_output()?;
+        if !exit_code.status.success() {
+            panic!("Failed to execute process: {}\nErrMsg:\n{}", exit_code.status, String::from_utf8_lossy(&exit_code.stderr));
+        }
+
+        Ok(())
     }
 }
 
 
 fn test_path_if_is_jvm(path:&Path) ->bool {
-    return path.exists() && path.join("bin").join("java.exe").exists();
+    path.exists() && path.join("bin").join("java.exe").exists()
 }
 fn test_version_in(versions:&[&str], version:&str) ->bool {
     for v in versions {
@@ -209,7 +263,7 @@ fn test_jvm_home_version<'a>(path: &'a Path, versions: &[&str]) -> Result<&'a Pa
         }
     }
 
-    let output = std::process::Command::new(path.join("bin").join("java.exe"))
+    let output = Command::new(path.join("bin").join("java.exe"))
         .arg("-version")
         .output()
         .map_err(|e| format!("Failed to execute command: {}", e))?;

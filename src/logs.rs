@@ -1,12 +1,10 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, remove_file};
 use std::{io, panic};
-use std::fmt::write;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::io::{Write};
+use std::path::{PathBuf};
 use chrono::Local;
 use once_cell::sync::Lazy;
 use crate::kotlin::ScopeFunc;
-use crate::Results;
 use crate::exit;
 
 const TIME_FORMAT:&str = "%Y%m%d%H%M%S";
@@ -14,47 +12,54 @@ const TIME_FORMAT:&str = "%Y%m%d%H%M%S";
 static FILENAME_BODY: Lazy<String> = Lazy::new(|| Local::now()
     .format(TIME_FORMAT)
     .to_string()
-    .transform(|s|
+    .transform(|_|
         "test".to_string()
     )
 );
-fn get_file_name(prefix:&str) -> String {
+pub trait LogFile {
+    fn as_log_file(&self, is_overwrite: bool) -> io::Result<File>;
+    #[inline]
+    fn as_append_log_file(&self) -> io::Result<File> {
+        self.as_log_file(false)
+    }
+}
+impl LogFile for PathBuf {
+    #[inline]
+    fn as_log_file(&self, is_overwrite: bool) -> io::Result<File> {
+        _log_file(self.clone(), is_overwrite)
+    }
+}
+impl LogFile for &str {
+    #[inline]
+    fn as_log_file(&self, is_overwrite: bool) -> io::Result<File> {
+        get_file_name(self)
+            .transform(PathBuf::from)
+            .transform(|s| _log_file(s,is_overwrite))
+    }
+}
+#[inline]
+pub fn get_file_name(prefix:&str) -> String {
     format!("{}{}.log", FILENAME_BODY.as_str(),prefix)
 }
-fn open_log_(data:&str,is_prefix:bool) -> io::Result<File> {
-    let path = if is_prefix { get_file_name(data) } else { data.to_string() };
+
+#[inline]
+pub fn _log_file(path:PathBuf,is_overwrite:bool) ->io::Result<File> {
+    let path = path.as_path();
+    if is_overwrite && path.exists() {
+        remove_file(path)?;
+    }
     OpenOptions::new()
         .write(true)
         .create(true)
         .append(true)
         .open(path)
 }
-#[inline]
-fn open_log_or_prefix(path:Option<&PathBuf>,prefix:&str) -> io::Result<File> {
-    if let Some(path) = path {
-        open_log_(path.to_str().unwrap(),false)
-            .unwrap_or(open_log_or_prefix(None,prefix)?)
-    } else {
-        open_log_(get_file_name(prefix).as_str(),true)?
-    }.transform(Ok)
-}
-#[inline]
-pub fn file_err(path:Option<&PathBuf>) -> Results<File> {
-    Ok(open_log_or_prefix(path,"err")?)
-}
-#[inline]
-pub fn file_out(path:Option<&PathBuf>) -> Results<File> {
-    Ok(open_log_or_prefix(path,"out")?)
-}
-#[inline]
-pub fn file_panic(path:Option<&PathBuf>) -> Results<File> {
-    Ok(open_log_or_prefix(path,"panic")?)
-}
+
 
 pub fn hook_panic() {
     let hook_before = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
-        let mut file = file_panic(None).unwrap();
+        let mut file = "panic".as_append_log_file().unwrap();
         let info = format!("new panic:\ninfo:\ntime:{},{:?}\n\n",Local::now().format(TIME_FORMAT), panic_info);
         file.write_all(info.as_bytes()).unwrap();
         file.flush().unwrap();

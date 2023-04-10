@@ -18,6 +18,7 @@ fn wstr(s: String) -> (HSTRING, PCWSTR) {
 fn main() {
     if_check_utf8();
     hook_panic();
+    panic!("test")
 }
 
 mod exit {
@@ -68,8 +69,11 @@ mod exit {
 
 mod kotlin {
     pub trait ScopeFunc: Sized {
+        #[inline]
         fn transform<F, R>(self, f: F) -> R where F: FnOnce(Self) -> R, { f(self) }
+        #[inline]
         fn modify<F>(mut self, f: F) -> Self where F: FnOnce(&mut Self), { f(&mut self);self }
+        #[inline]
         fn inspect<F>(self, f: F) -> Self where F: FnOnce(&Self), { f(&self);self }
     }
     impl<T> ScopeFunc for T {}
