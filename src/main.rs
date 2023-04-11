@@ -6,6 +6,7 @@ mod jvm;
 use std::process::{exit};
 use windows::core::{ HSTRING, PCWSTR};
 use crate::exit::{if_check_utf8};
+use crate::jvm::Jvm;
 use crate::logs::hook_panic;
 
 type Results<T> = Result<T,Box<dyn std::error::Error>>;
@@ -18,7 +19,8 @@ fn wstr(s: String) -> (HSTRING, PCWSTR) {
 fn main() {
     if_check_utf8();
     hook_panic();
-    panic!("test")
+    Jvm::create().unwrap().invoke().unwrap();
+    panic!("test");
 }
 
 mod exit {

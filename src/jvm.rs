@@ -1,16 +1,15 @@
 use std::cmp::Ordering;
 use std::env::{args, var};
-use std::fmt::{Debug, Display, Formatter, write};
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::{File};
 use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
 use std::{io, panic, thread};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, exit, Stdio};
+use std::process::{Child, Command, Stdio};
 use crate::logs::{LogFile};
 use crate::{logs, Results};
 use crate::kotlin::ScopeFunc;
 use crate::var::*;
-use std::os::windows::process::CommandExt;
 
 
 /**
@@ -54,7 +53,8 @@ pub const SPLASH_SCREEN_IMAGE_PATH:Option<&'static str> = Some("path/toImage");
 // execute jvm error
 enum JvmError {
     JvmNotFound(PathBuf),
-    ExecuteFailed(String)
+    ExecuteFailed(String),
+    ExitCode(i32,String)
 }
 impl JvmError {
     pub fn failed(s: String) -> Self {
@@ -69,7 +69,9 @@ impl JvmError {
                 let p = p.to_str().unwrap_or_default();
                 write!(f, "Jvm not found in path: {}", p)
             },
-            JvmError::ExecuteFailed(s) => write!(f, "{}", s)
+            JvmError::ExecuteFailed(s) => write!(f, "{}", s),
+            JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} reason:\n{}\n", code, s)
+
         }
     }
 }
@@ -84,9 +86,7 @@ impl Display for JvmError {
 impl std::error::Error for JvmError {}
 
 
-
-
-struct Jvm {
+pub struct Jvm {
     path: PathBuf,
 }
 
@@ -95,9 +95,8 @@ impl Jvm {
     pub fn create() -> Option<Self> {
         let path = File::open(Path::new(WORKDIR).join(".jvm"));
         let mut is_get = path.is_ok();
-        if path.is_ok() {
+        if let Ok(mut path) = path {
             is_get = false;
-            let mut path = path.unwrap();
             let mut buf = String::new();
             path.read_to_string(&mut buf).unwrap();
             if test_path_if_is_jvm(Path::new(&buf)) {
@@ -184,12 +183,11 @@ impl Jvm {
     }
 
     pub fn invoke(&self) -> Results<()> {
-
         // command prepare
         let mut command = Command::new(self.path.join("bin").join("java.exe"));
+        command.args(self.command_args());
         // workdir
         command.current_dir(WORKDIR);
-        command.args(self.command_args());
         // set env
         // for (k,v) in JRE_ENVS {
         //     command.env(k,v);
@@ -198,45 +196,78 @@ impl Jvm {
         command.stderr(Stdio::piped());
 
         let command = command.spawn()?;
-        self._next(command)?;
-
+        self._next(command).unwrap();
         // set log
         Ok(())
     }
-    fn _next(&self, mut command:Child) -> Results<()> {
-        if let Some(stdout) = command.stdout.take() {
-            thread::spawn(move || {
-                let mut log = Self::get_file_by_log(LOG_STDOUT_PATH, "log").unwrap();
-                BufReader::new(stdout).lines().for_each(|line| {
-                    let line = line.unwrap();
-                    println!("{}", line);
-                    if let Some(log) = log.as_mut() {
-                        log.write_all(line.as_bytes()).unwrap();
-                    }
-                });
-            });
+    fn read_till_line<F>(reader: &mut dyn BufRead, mut callback: F) -> io::Result<()>
+        where F: FnMut(&[u8]) -> io::Result<()>
+    {
+        let mut buf = vec![];
+        // let callback = &callback;
+        loop {
+            let size = reader.read_until(b'\n',&mut buf)?;
+            if size == 0 {
+                break;
+            }
+            callback(&buf[..size])?;
+            buf.clear();
         }
-        if let Some(stderr) = command.stderr.take() {
-            thread::spawn(move || {
-                let mut log = Self::get_file_by_log(LOG_STDOUT_PATH, "err").unwrap();
-                BufReader::new(stderr).lines().for_each(|line| {
-                    let line = line.unwrap();
-                    eprintln!("{}", line);
-                    if let Some(log) = log.as_mut() {
-                        log.write_all(line.as_bytes()).unwrap();
-                    }
-                });
-
-            });
-        }
-        let exit_code = command.wait_with_output()?;
-        if !exit_code.status.success() {
-            panic!("Failed to execute process: {}\nErrMsg:\n{}", exit_code.status, String::from_utf8_lossy(&exit_code.stderr));
-        }
-
         Ok(())
     }
+    fn read_std<R:Read+Send>(reader: R, mut log_file:Option<File>, is_err:bool) -> io::Result<()> {
+        let mut  reader = BufReader::new(reader);
+        Jvm::read_till_line(&mut reader, |buf| {
+            let line = String::from_utf8_lossy(buf);
+            if is_err {
+                eprint!("{}", line);
+            } else {
+                print!("{}", line);
+            }
+            if let Some(log) = log_file.as_mut() {
+                log.write_all(line.as_bytes()).unwrap();
+            }
+            Ok(())
+        })
+    }
+    fn _next(&self, mut command:Child) -> Results<()> {
+        let out = command.stdout.take().map(|stdout| {
+            thread::spawn(move || {
+                let log = Self::get_file_by_log(LOG_STDOUT_PATH, "log")?;
+                Jvm::read_std(stdout, log, false)
+            })
+        });
+        let err = command.stderr.take().map(|stderr| {
+            thread::spawn(move || {
+                let log = Self::get_file_by_log(LOG_STDERR_PATH, "err")?;
+                Jvm::read_std(stderr, log, true)
+            })
+        });
+        let exit_code = command.wait_with_output()?;
+        if let Some(out) = out {
+            out.join()
+                .map_err(|e| e.downcast::<Error>().unwrap())??;
+        }
+        if let Some(err) = err {
+            err.join()
+                .map_err(|e| e.downcast::<Error>().unwrap())??;
+        }
+        if !exit_code.status.success() {
+            let reason = String::from_utf8_lossy(&exit_code.stderr);
+            // let out = String::from_utf8_lossy(&exit_code.stderr);
+            // if let Ok(mut f) = "exit".as_append_log_file() {
+            //     let _ = f.write_all(out.as_bytes());
+            //     let _ = f.write_all("\nerr\n".as_bytes());
+            //     let _ = f.write_all(reason.as_bytes());
+            // }
+            let err = JvmError::ExitCode(exit_code.status.code().unwrap_or(-1), reason.to_string());
+            Err(Box::try_from(err).unwrap())
+        } else {
+            Ok(())
+        }
+    }
 }
+
 
 
 fn test_path_if_is_jvm(path:&Path) ->bool {
