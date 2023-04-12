@@ -2,12 +2,13 @@ use std::cmp::Ordering;
 use std::env::{args, var};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::{File};
-use std::io::{BufRead, BufReader, Error, ErrorKind, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::{io, panic, thread};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use crate::logs::{LogFile};
-use crate::{logs, Results};
+use crate::logs::LogFile;
+use crate::Results;
+use crate::charsets::CharsetConverter;
 use crate::kotlin::ScopeFunc;
 use crate::var::*;
 
@@ -21,6 +22,10 @@ pub const WORKDIR_IS_VARIABLE:bool = false;
 
 pub const LOG_STDERR_PATH:Option<(Option<&'static str>,bool)> = Some((None,false));
 pub const LOG_STDOUT_PATH:Option<(Option<&'static str>,bool)> = None;
+
+pub const CHARSET_STDOUT:Option<&'static str> = Some("GBK");
+pub const CHARSET_JVM:Option<&'static str> = None;
+pub const CHARSET_PAGE_CODE:Option<&'static str> = None;
 
 pub const JAR_FILES:&[&str] = &["path/to/jar"];
 pub const JAR_LAUNCHER_FILE:usize = 0;
@@ -47,44 +52,6 @@ pub const JRE_PREFERRED:& str = "DefaultVM";
 pub const SPLASH_SCREEN_IMAGE_PATH:Option<&'static str> = Some("path/toImage");
 
  */
-
-
-// jvm errors
-// execute jvm error
-enum JvmError {
-    JvmNotFound(PathBuf),
-    ExecuteFailed(String),
-    ExitCode(i32,String)
-}
-impl JvmError {
-    pub fn failed(s: String) -> Self {
-        Self::ExecuteFailed(s)
-    }
-    pub fn jvm_not_found(p: PathBuf) -> Self {
-        Self::JvmNotFound(p)
-    }
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            JvmError::JvmNotFound(p) => {
-                let p = p.to_str().unwrap_or_default();
-                write!(f, "Jvm not found in path: {}", p)
-            },
-            JvmError::ExecuteFailed(s) => write!(f, "{}", s),
-            JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} reason:\n{}\n", code, s)
-
-        }
-    }
-}
-
-
-impl Debug for JvmError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { JvmError::fmt(self, f) }
-}
-impl Display for JvmError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { JvmError::fmt(self, f) }
-}
-impl std::error::Error for JvmError {}
-
 
 pub struct Jvm {
     path: PathBuf,
@@ -118,6 +85,12 @@ impl Jvm {
         // push all jre opts
         for opt in JRE_OPTIONS {
             command_args.push(opt.to_string());
+        }
+        if let Some(charset) = CHARSET_JVM {
+            let charset = format!("-Dfile.encoding={}", charset);
+            if !command_args.contains(&charset) {
+                command_args.push(charset);
+            }
         }
         if let Some(img) = SPLASH_SCREEN_IMAGE_PATH {
             command_args.push("-splash:".to_string()+img);
@@ -185,18 +158,20 @@ impl Jvm {
     pub fn invoke(&self) -> Results<()> {
         // command prepare
         let mut command = Command::new(self.path.join("bin").join("java.exe"));
-        command.args(self.command_args());
-        // workdir
-        command.current_dir(WORKDIR);
-        // set env
-        // for (k,v) in JRE_ENVS {
-        //     command.env(k,v);
-        // }
-        command.stdout(Stdio::piped());
-        command.stderr(Stdio::piped());
+        let child = {
+            command.args(self.command_args());
+            // workdir
+            command.current_dir(WORKDIR);
+            // set env
+            // for (k,v) in JRE_ENVS {
+            //     command.env(k,v);
+            // }
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::piped());
+            command.spawn()?
 
-        let command = command.spawn()?;
-        self._next(command).unwrap();
+        };
+        self._next(child).unwrap();
         // set log
         Ok(())
     }
@@ -206,29 +181,31 @@ impl Jvm {
         let mut buf = vec![];
         // let callback = &callback;
         loop {
-            let size = reader.read_until(b'\n',&mut buf)?;
-            if size == 0 {
-                break;
-            }
-            callback(&buf[..size])?;
+            if  reader.read_until(b'\n',&mut buf)? < 1 {
+                break
+            };
+            callback(&buf[..])?;
             buf.clear();
         }
         Ok(())
     }
-    fn read_std<R:Read+Send>(reader: R, mut log_file:Option<File>, is_err:bool) -> io::Result<()> {
+    fn read_std<R:Read+Send>(reader: R, mut log_file:Option<File>, is_err:bool) -> io::Result<String> {
         let mut  reader = BufReader::new(reader);
-        Jvm::read_till_line(&mut reader, |buf| {
-            let line = String::from_utf8_lossy(buf);
+        let mut r = String::new();
+        Jvm::read_till_line(&mut reader, |mut buf| {
+            let line = buf.encode_from_std();
             if is_err {
                 eprint!("{}", line);
             } else {
                 print!("{}", line);
             }
+            r+=&line;
             if let Some(log) = log_file.as_mut() {
                 log.write_all(line.as_bytes()).unwrap();
             }
             Ok(())
-        })
+        })?;
+        Ok(r)
     }
     fn _next(&self, mut command:Child) -> Results<()> {
         let out = command.stdout.take().map(|stdout| {
@@ -244,24 +221,24 @@ impl Jvm {
             })
         });
         let exit_code = command.wait_with_output()?;
-        if let Some(out) = out {
-            out.join()
-                .map_err(|e| e.downcast::<Error>().unwrap())??;
-        }
-        if let Some(err) = err {
-            err.join()
-                .map_err(|e| e.downcast::<Error>().unwrap())??;
-        }
+        let out =  out.map(|out|
+            out.join().unwrap().unwrap()
+        );
+        let err =  err.map(|err|
+            err.join().unwrap().unwrap()
+        );
         if !exit_code.status.success() {
-            let reason = String::from_utf8_lossy(&exit_code.stderr);
+            let reason = if let Some(err) = err {
+                err + out.unwrap_or_default().as_str()
+            } else { String::from("no msg") };
             // let out = String::from_utf8_lossy(&exit_code.stderr);
             // if let Ok(mut f) = "exit".as_append_log_file() {
             //     let _ = f.write_all(out.as_bytes());
             //     let _ = f.write_all("\nerr\n".as_bytes());
             //     let _ = f.write_all(reason.as_bytes());
             // }
-            let err = JvmError::ExitCode(exit_code.status.code().unwrap_or(-1), reason.to_string());
-            Err(Box::try_from(err).unwrap())
+            let err = JvmError::exit_code(exit_code.status.code().unwrap_or(-1), reason);
+            Err(err.into())
         } else {
             Ok(())
         }
@@ -281,44 +258,42 @@ fn test_version_in(versions:&[&str], version:&str) ->bool {
 }
 
 
-fn test_jvm_home_version<'a>(path: &'a Path, versions: &[&str]) -> Result<&'a Path, String> {
-    if let Ok(mut file) = File::open(path.join("release")).map_err(|e| format!("Failed to open release file: {}", e)) {
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| format!("Failed to read release file: {}", e))?;
-        let version = buf
+fn test_jvm_home_version<'a>(path: &'a Path, versions: &[&str]) -> Results<&'a Path> {
+    if let Ok(file) = File::open(path.join("release")) {
+        let version = BufReader::new(file)
             .lines()
-            .find_map(|line| line.strip_prefix("JAVA_VERSION=").map(|s| s.trim_matches('"')))
-            .ok_or_else(|| format!("Java version not found in release file: {:?}", path.join("release")))?;
-        if test_version_in(versions, version) {
-            return Ok(path);
+            .flatten()
+            .find(|x| x.starts_with("JAVA_VERSION="));
+        if let Some(version) = version {
+            let version = version.trim_start_matches("JAVA_VERSION=").trim_matches('"');
+            if test_version_in(versions, version) {
+                return Ok(path)
+            }
         }
     }
-
-    let output = Command::new(path.join("bin").join("java.exe"))
+    let mut output = Command::new(path.join("bin").join("java.exe"))
         .arg("-version")
-        .output()
-        .map_err(|e| format!("Failed to execute command: {}", e))?;
+        .output()?;
+
     if !output.status.success() {
-        return Err(format!(
-            "java -version failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        let msg = format!(
+            "err to execute the java.exe from {:?} . \ncuz:\n{}\n{} ",
+            path,output.stdout.encode_from_std(),output.stderr.encode_from_std()
+        );
+        let msg = JvmError::failed(msg);
+        return Err(msg.into());
     }
-    let output = String::from_utf8(output.stdout).map_err(|e| {
-        format!(
-            "Failed to parse command output as UTF-8: {}",
-            String::from_utf8_lossy(&e.as_bytes())
-        )
-    })?;
+    let output = output.stdout.encode_from_std();
     let output = output
         .lines()
         .next()
-        .and_then(|line| line.split(' ').nth(1))
-        .ok_or_else(|| format!("Failed to parse command output: {}", output))?;
-    if test_version_in(versions, output) {
+        .and_then(|line| line.split(' ').nth(1));
+
+    if test_version_in(versions, output.unwrap()) {
         Ok(path)
     } else {
-        Err(format!("{} is not a JVM path", path.display()))
+        let err = JvmError::jvm_not_found(path.to_path_buf());
+        Err(err.into())
     }
 }
 
@@ -332,12 +307,11 @@ fn test_all_jvm() -> Result<PathBuf, String> {
 
     let dirs = JRE_SEARCH_ENV
         .iter()
-        .map(|&key| {
+        .filter_map(|&key| {
             var(key)
                 .map_err(|e| { errors.push(format!("{}: {}", key, e)); })
                 .ok()
         })
-        .filter_map(|s| s)
         .collect::<Vec<String>>();
 
     let dirs = dirs
@@ -345,10 +319,9 @@ fn test_all_jvm() -> Result<PathBuf, String> {
         .map(|s| s.as_str());
 
     let dirs = JRE_SEARCH_DIR
-        .iter()
-        .map(|&s| s)
+        .iter().copied()
         .chain(dirs)
-        .map(|path| Path::new(path))
+        .map(Path::new)
         // .map(|p| {
         //
         //     println!("found {}",p.display());
@@ -359,12 +332,49 @@ fn test_all_jvm() -> Result<PathBuf, String> {
         .filter(|path| test_path_if_is_jvm(path))
         .filter_map(|path|
             test_jvm_home_version(path, JRE_VERSION)
-                .map_err(|e| { errors.push(e); })
+                .map_err(|e| { errors.push(e.to_string()); })
                 .ok()
-        ).map(|path| path.to_owned().into()).collect::<Vec<PathBuf>>();
+        ).map(|path| path.to_owned()).collect::<Vec<PathBuf>>();
 
     dirs
         .first()
         .map(|buf|buf.to_owned())
         .ok_or(format!("we cant find a jvm in the system, errors: {}", errors.join(", ")))
 }
+
+// jvm errors
+// execute jvm error
+enum JvmError {
+    JvmNotFound(PathBuf),
+    ExecuteFailed(String),
+    ExitCode(i32,String)
+}
+impl JvmError {
+    pub fn failed(s: String) -> Self {
+        Self::ExecuteFailed(s)
+    }
+    pub fn jvm_not_found(p: PathBuf) -> Self {
+        Self::JvmNotFound(p)
+    }
+    pub fn exit_code(code: i32, s: String) -> Self {
+        Self::ExitCode(code, s)
+    }
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JvmError::JvmNotFound(p) => {
+                let p = p.to_str().unwrap_or_default();
+                write!(f, "Jvm not found in path: {}", p)
+            },
+            JvmError::ExecuteFailed(s) => write!(f, "{}", s),
+            JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} reason:\n{}", code, s)
+        }
+    }
+}
+
+impl Debug for JvmError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { JvmError::fmt(self, f) }
+}
+impl Display for JvmError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { JvmError::fmt(self, f) }
+}
+impl std::error::Error for JvmError {}

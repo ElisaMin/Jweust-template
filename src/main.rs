@@ -1,7 +1,7 @@
 mod logs;
 mod var;
 mod jvm;
-
+mod charsets;
 
 use std::process::{exit};
 use windows::core::{ HSTRING, PCWSTR};
@@ -25,11 +25,14 @@ fn main() {
 
 mod exit {
     use std::io::Error;
+    use std::panic::catch_unwind;
     use std::process::{Command, exit};
     use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Console::SetConsoleCP;
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW};
     use crate::kotlin::ScopeFunc;
     use crate::{Results, wstr};
+    use crate::var::CHARSET_PAGE_CODE;
 
     pub fn show_err_(msg:String) -> Results<MESSAGEBOX_RESULT> {
         message_box(msg, "错误".to_string(), MB_OK | MB_ICONERROR)
@@ -42,15 +45,20 @@ mod exit {
         exit(-1);
     }
     pub fn if_check_utf8() {
-        let utf8 = Command::new("chcp.com")
-            .args(["65001"])
-            // .stdout(Stdio::inherit())
-            .output();
-        if let Err(err) = utf8 {
-            exit(show_(err).unwrap().0);
-        } else if let Ok(utf8) = utf8 {
-            if !utf8.status.success() {
-                exit(show_(Error::last_os_error()).unwrap().0);
+        if let Some(page_code) =  CHARSET_PAGE_CODE {
+            let _=catch_unwind(|| unsafe {
+                SetConsoleCP(page_code.parse::<u32>().unwrap()).unwrap();
+            });
+            let utf8 = Command::new("chcp.com")
+                .args([page_code])
+                // .stdout(Stdio::inherit())
+                .output();
+            if let Err(err) = utf8 {
+                exit(show_(err).unwrap().0);
+            } else if let Ok(utf8) = utf8 {
+                if !utf8.status.success() {
+                    exit(show_(Error::last_os_error()).unwrap().0);
+                }
             }
         }
     }

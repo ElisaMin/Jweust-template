@@ -12,9 +12,9 @@ const TIME_FORMAT:&str = "%Y%m%d%H%M%S";
 static FILENAME_BODY: Lazy<String> = Lazy::new(|| Local::now()
     .format(TIME_FORMAT)
     .to_string()
-    .transform(|_|
-        "test".to_string()
-    )
+    // .transform(|_|
+    //     "test".to_string()
+    // )
 );
 pub trait LogFile {
     fn as_log_file(&self, is_overwrite: bool) -> io::Result<File>;
