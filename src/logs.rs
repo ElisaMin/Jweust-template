@@ -39,7 +39,7 @@ impl LogFile for &str {
 }
 #[inline]
 pub fn get_file_name(prefix:&str) -> String {
-    format!("{}{}.log", FILENAME_BODY.as_str(),prefix)
+    format!("{}-{}.log", FILENAME_BODY.as_str(),prefix)
 }
 
 #[inline]

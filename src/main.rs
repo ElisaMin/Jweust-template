@@ -3,15 +3,18 @@ mod logs;
 mod var;
 mod jvm;
 mod charsets;
-use std::env::args;
+use std::env::{args, current_dir, set_current_dir};
+use std::fs::{create_dir_all};
+use std::path::PathBuf;
 use std::process::{exit};
+use once_cell::sync::Lazy;
 use windows::core::{ HSTRING, PCWSTR};
 use windows::Win32::System::Console::{AllocConsole, FreeConsole};
 use crate::exit::{if_check_utf8};
 use crate::jvm::Jvm;
 use crate::kotlin::ScopeFunc;
 use crate::logs::hook_panic;
-use crate::var::{APPLICATION_WITH_OUT_CLI, EXE_IS_INSTANCE};
+use crate::var::{APPLICATION_WITH_OUT_CLI, EXE_IS_INSTANCE, EXE_PRODUCT_NAME, WORKDIR};
 
 type Results<T> = Result<T,Box<dyn std::error::Error>>;
 fn wstr(s: String) -> (HSTRING, PCWSTR) {
@@ -19,7 +22,27 @@ fn wstr(s: String) -> (HSTRING, PCWSTR) {
     let w = PCWSTR::from_raw(h.as_ptr());
     (h, w)
 }
+fn workdir()->PathBuf {
+    static _WORKDIR: Lazy<PathBuf> = Lazy::new(|| {
+        if let Some(path) = WORKDIR {
+            let path = PathBuf::from(path);
+            if path.exists() || create_dir_all(&path).is_ok() {
+                return path;
+            }
+        };
+        if let Some(path) = std::env::var_os("APPDATA") {
+                let path = PathBuf::from(path).join("jweust").join(EXE_PRODUCT_NAME);
+                if path.exists() || create_dir_all(path.clone()).is_ok() {
+                    return path;
+                }
+            };
+        current_dir().unwrap().canonicalize().unwrap()
+    });
+    _WORKDIR.clone()
+
+}
 fn main() {
+    set_current_dir(workdir()).unwrap();
     // None means CLI enabling
     if let Some(cli_command) = APPLICATION_WITH_OUT_CLI {
         cli_command.is_some() && args().collect::<Vec<String>>().contains(&cli_command.unwrap().to_string())

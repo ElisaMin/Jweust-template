@@ -8,7 +8,7 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use crate::logs::LogFile;
-use crate::Results;
+use crate::{Results, workdir};
 use crate::charsets::CharsetConverter;
 use crate::kotlin::ScopeFunc;
 use crate::var::*;
@@ -61,7 +61,8 @@ pub struct Jvm {
 impl Jvm {
 
     pub fn create() -> Option<Self> {
-        let path = File::open(Path::new(WORKDIR).join(".jvm"));
+        let jvm_remember = workdir().join(".jvm");
+        let path = File::open(&jvm_remember );
         let mut is_get = path.is_ok();
         if let Ok(mut path) = path {
             is_get = false;
@@ -73,7 +74,7 @@ impl Jvm {
         }
         let jvm = test_all_jvm().ok()?;
         if !is_get {
-            File::create(Path::new(WORKDIR).join(".jvm")).unwrap().write_all(jvm.to_string_lossy().as_bytes()).unwrap();
+            File::create(&jvm_remember).unwrap().write_all(jvm.to_string_lossy().as_bytes()).unwrap();
         }
         Some(Self::new(test_all_jvm().ok()?))
     }
@@ -163,7 +164,7 @@ impl Jvm {
             command.creation_flags(0x08000000);
             command.args(self.command_args());
             // workdir
-            command.current_dir(WORKDIR);
+            command.current_dir(&workdir());
             // set env
             // for (k,v) in JRE_ENVS {
             //     command.env(k,v);
