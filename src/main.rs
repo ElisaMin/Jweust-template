@@ -8,6 +8,7 @@ use windows::core::{ HSTRING, PCWSTR};
 use crate::exit::{if_check_utf8};
 use crate::jvm::Jvm;
 use crate::logs::hook_panic;
+use crate::var::EXE_IS_INSTANCE;
 
 type Results<T> = Result<T,Box<dyn std::error::Error>>;
 fn wstr(s: String) -> (HSTRING, PCWSTR) {
@@ -17,6 +18,10 @@ fn wstr(s: String) -> (HSTRING, PCWSTR) {
 }
 
 fn main() {
+    if EXE_IS_INSTANCE {
+        exit::if_instance_exist().unwrap();
+    }
+     exit::if_instance_exist().unwrap();
     if_check_utf8();
     hook_panic();
     Jvm::create().unwrap().invoke().unwrap();
@@ -24,15 +29,47 @@ fn main() {
 }
 
 mod exit {
+    use std::{env, process};
     use std::io::Error;
     use std::panic::catch_unwind;
+    use std::path::PathBuf;
     use std::process::{Command, exit};
-    use windows::Win32::Foundation::HWND;
+    use windows::imp::CloseHandle;
+    use windows::Win32::Foundation::{HWND};
     use windows::Win32::System::Console::SetConsoleCP;
-    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FlashWindow, GetWindowThreadProcessId, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW, SetForegroundWindow};
+    use windows::Win32::System::ProcessStatus::{EnumProcesses, GetModuleFileNameExW};
     use crate::kotlin::ScopeFunc;
     use crate::{Results, wstr};
     use crate::var::CHARSET_PAGE_CODE;
+
+
+    pub fn if_instance_exist() ->Results<()> {
+        let selfs =  found_process_by_path(env::current_exe()?);
+        if selfs.len() > 1 {
+            if let Some((pid,_)) = {
+                let pid = process::id();
+                selfs.iter().find(|(p,_)|!pid.eq(p))
+            } {
+                unsafe {
+                    if let Some(handler) = find_window_by(*pid) {
+                        FlashWindow(handler,true);
+                        SetForegroundWindow(handler);
+                        exit(0)
+                    }
+                }
+            }
+            message_box(
+                "本应用为单例模式，检测到已经有一个实例运行，请检查。".to_string(),
+                "单例模式".to_string(),
+                MB_OK | MB_ICONINFORMATION
+            )?;
+
+            exit(0);
+        }
+        Ok(())
+    }
 
     pub fn show_err_(msg:String) -> Results<MESSAGEBOX_RESULT> {
         message_box(msg, "错误".to_string(), MB_OK | MB_ICONERROR)
@@ -73,6 +110,71 @@ mod exit {
                 u_type
             ).transform(Ok)
         }
+    }
+    fn find_window_by(pid:u32) -> Option<HWND> {
+        let mut hwnd:Option<HWND> = None;
+        while let Some(handler) = unsafe { FindWindowExW(None, hwnd.as_ref(), None, None).into() } {
+            hwnd = Some(handler);
+            let mut _pid = 0u32;
+            unsafe {
+                GetWindowThreadProcessId(handler, Some(&mut _pid));
+            }
+            if pid == _pid {
+                return Some(handler)
+            }
+        }
+        None
+    }
+
+    fn all_process_and_path(process_ids : &'_ mut [u32; 1024]) -> impl Iterator<Item = (u32, String)> + '_ {
+        {
+            let mut bytes_returned = 0u32;
+            unsafe {
+                EnumProcesses(process_ids.as_mut_ptr(), process_ids.len() as u32 * 4, &mut bytes_returned);
+            }
+        };
+        process_ids.iter()
+            .filter(|pid| **pid != 0)
+            .filter_map(|&pid| {
+                unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }
+                    .map(|process_handle| (pid, process_handle))
+                    .ok()
+            })
+            .filter(|(_,process_handle)| !process_handle.is_invalid())
+            .map(|(pid,process_handle)| {
+                let path = {
+                    let mut process_path = [0u16; 1024];
+                    let size = unsafe {
+                        let size = GetModuleFileNameExW(
+                            process_handle,
+                            None,
+                            &mut process_path,
+                        );
+                        CloseHandle(process_handle.0);
+                        size as usize
+                    };
+                    String::from_utf16_lossy(&process_path[..size])
+                };
+                (pid,path)
+            })
+
+
+    }
+    fn found_process_by_path(path: PathBuf) -> Vec<(u32, PathBuf)> {
+        let path = path.as_path().canonicalize().unwrap();
+        all_process_and_path(&mut  [0u32; 1024])
+            .filter_map(|(pid,process_path)|
+                PathBuf::from(process_path)
+                    .as_path()
+                    .canonicalize()
+                    .map(|process_path|
+                        (pid,process_path)
+                    )
+                    .ok()
+            )
+            .filter(|(_,process_path)| process_path
+                .as_path().canonicalize().unwrap() == path
+            ).collect::<Vec<_>>()
     }
 }
 
