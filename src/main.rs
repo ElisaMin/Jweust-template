@@ -1,14 +1,17 @@
+#![windows_subsystem = "windows"]
 mod logs;
 mod var;
 mod jvm;
 mod charsets;
-
+use std::env::args;
 use std::process::{exit};
 use windows::core::{ HSTRING, PCWSTR};
+use windows::Win32::System::Console::{AllocConsole, FreeConsole};
 use crate::exit::{if_check_utf8};
 use crate::jvm::Jvm;
+use crate::kotlin::ScopeFunc;
 use crate::logs::hook_panic;
-use crate::var::EXE_IS_INSTANCE;
+use crate::var::{APPLICATION_WITH_OUT_CLI, EXE_IS_INSTANCE};
 
 type Results<T> = Result<T,Box<dyn std::error::Error>>;
 fn wstr(s: String) -> (HSTRING, PCWSTR) {
@@ -16,8 +19,16 @@ fn wstr(s: String) -> (HSTRING, PCWSTR) {
     let w = PCWSTR::from_raw(h.as_ptr());
     (h, w)
 }
-
 fn main() {
+    // None means CLI enabling
+    if let Some(cli_command) = APPLICATION_WITH_OUT_CLI {
+        cli_command.is_some() && args().collect::<Vec<String>>().contains(&cli_command.unwrap().to_string())
+    } else {
+        true
+    }.transform(|e| unsafe {
+        if e { AllocConsole(); }
+        else { FreeConsole(); };
+    });
     if EXE_IS_INSTANCE {
         exit::if_instance_exist().unwrap();
     }
@@ -25,7 +36,6 @@ fn main() {
     if_check_utf8();
     hook_panic();
     Jvm::create().unwrap().invoke().unwrap();
-    panic!("test");
 }
 
 mod exit {

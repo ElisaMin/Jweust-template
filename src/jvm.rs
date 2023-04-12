@@ -4,6 +4,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::fs::{File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::{io, panic, thread};
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use crate::logs::LogFile;
@@ -159,6 +160,7 @@ impl Jvm {
         // command prepare
         let mut command = Command::new(self.path.join("bin").join("java.exe"));
         let child = {
+            command.creation_flags(0x08000000);
             command.args(self.command_args());
             // workdir
             command.current_dir(WORKDIR);
