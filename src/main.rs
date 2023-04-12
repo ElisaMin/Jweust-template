@@ -77,10 +77,10 @@ mod exit {
     pub fn show_(err:Error) -> Results<MESSAGEBOX_RESULT> {
         show_err_(format!("Error: {}", err))
     }
-    pub fn after_show(err:Error) {
-        show_(err).unwrap();
-        exit(-1);
-    }
+    // pub fn after_show(err:Error) {
+    //     show_(err).unwrap();
+    //     exit(-1);
+    // }
     pub fn if_check_utf8() {
         if let Some(page_code) =  CHARSET_PAGE_CODE {
             let _=catch_unwind(|| unsafe {
