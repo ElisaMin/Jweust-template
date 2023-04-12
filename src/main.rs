@@ -3,7 +3,7 @@ mod logs;
 mod var;
 mod jvm;
 mod charsets;
-use std::env::{args, current_dir, set_current_dir};
+use std::env::{args, current_dir};
 use std::fs::{create_dir_all};
 use std::path::PathBuf;
 use std::process::{exit};
@@ -42,7 +42,7 @@ fn workdir()->PathBuf {
 
 }
 fn main() {
-    set_current_dir(workdir()).unwrap();
+    // set_current_dir(workdir()).unwrap();
     // None means CLI enabling
     if let Some(cli_command) = APPLICATION_WITH_OUT_CLI {
         cli_command.is_some() && args().collect::<Vec<String>>().contains(&cli_command.unwrap().to_string())
@@ -62,6 +62,9 @@ fn main() {
 }
 
 mod exit {
+    #![allow(unused_imports)]
+    #![allow(dead_code)]
+
     use std::{env, process};
     use std::io::Error;
     use std::panic::catch_unwind;
@@ -81,18 +84,17 @@ mod exit {
     pub fn if_instance_exist() ->Results<()> {
         let selfs =  found_process_by_path(env::current_exe()?);
         if selfs.len() > 1 {
-            if let Some((pid,_)) = {
-                let pid = process::id();
-                selfs.iter().find(|(p,_)|!pid.eq(p))
-            } {
-                unsafe {
-                    if let Some(handler) = find_window_by(*pid) {
-                        FlashWindow(handler,true);
-                        SetForegroundWindow(handler);
-                        exit(0)
-                    }
-                }
-            }
+            // if let Some((pid,_)) = {
+            //     let pid = process::id();
+            //     selfs.iter().find(|(p,_)|!pid.eq(p))
+            // } {
+            //     unsafe {
+            //         if let Some(handler) = find_window_by(*pid) {
+            //             FlashWindow(handler,true);
+            //             SetForegroundWindow(handler);
+            //         }
+            //     }
+            // }
             message_box(
                 "本应用为单例模式，检测到已经有一个实例运行，请检查。".to_string(),
                 "单例模式".to_string(),
