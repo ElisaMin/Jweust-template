@@ -38,6 +38,7 @@ fn manifest() -> Result<(), Error> {
         _ => ExecutionLevel::AsInvoker
     };
     let builder = builder.active_code_page(p)
+
         .max_version_tested(Windows11Version22H2)
         .requested_execution_level(pms)
         // .ui_access(true)
@@ -67,6 +68,8 @@ fn res() -> io::Result<WindowsResource> {
 
 fn main() {
     set_var("CARGO_CFG_TARGET_ARCH", EXE_ARCH);
+    set_var("CARGO_PKG_NAME", RUST_PROJECT_NAME);
+    set_var("CARGO_PKG_VERSION", EXE_PRODUCT_VERSION);
     res().unwrap().compile().unwrap();
     println!("cargo:rerun-if-changed=src/var.rs");
     println!("cargo:rerun-if-changed=build.rs");
