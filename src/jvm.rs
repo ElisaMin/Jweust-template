@@ -14,46 +14,6 @@ use crate::kotlin::ScopeFunc;
 use crate::var::*;
 
 
-/**
-var.rs
-pub const INCLUDE_JAR:bool = false;
-pub const APPLICATION_TYPE_IS_NO_CMD:bool = true;
-pub const WORKDIR:&str = ".";
-pub const WORKDIR_IS_VARIABLE:bool = false;
-
-pub const LOG_STDERR_PATH:Option<(Option<&'static str>,bool)> = Some((None,false));
-pub const LOG_STDOUT_PATH:Option<(Option<&'static str>,bool)> = None;
-
-pub const CHARSET_STDOUT:Option<&'static str> = Some("GBK");
-pub const CHARSET_JVM:Option<&'static str> = None;
-pub const CHARSET_PAGE_CODE:Option<&'static str> = None;
-
-pub const JAR_FILES:&[&str] = &["path/to/jar"];
-pub const JAR_LAUNCHER_FILE:usize = 0;
-pub const JAR_LAUNCHER_MAIN_CLASS:Option<&str> = Some("tools.heizi.ast.Main");
-pub const JAR_LAUNCHER_ARGS:&[(i32,&str)] = &[(0,"-a"),(i32::MAX,"-c")];
-
-pub const EXE_IS_INSTANCE:bool = true;
-pub const EXE_IS_X86:bool = false;
-pub const EXE_PERMISSION:i8 = -1;
-pub const EXE_ICON_PATH:Option<&str> = Some("icon.ico");
-pub const EXE_FILE_VERSION:&str = "0.0.1";
-pub const EXE_PRODUCT_VERSION:&str = "0.0.0";
-pub const EXE_INTERNAL_NAME:&str = "Android apk Sideload Tool From Heizi Flash Tools";
-pub const EXE_FILE_DESCRIPTION:&str = "线刷APK安装工具";
-pub const EXE_LEGAL_COPYRIGHT:&str = "Github/ElisaMin";
-pub const EXE_COMPANY_NAME:& str = "Heizi";
-
-pub const JRE_SEARCH_DIR:&[&str] = &["./lib/runtime"];
-pub const JRE_SEARCH_ENV:&[&str] = &["JAVA_HOME"];
-pub const JRE_OPTIONS:&[&str] = &[];
-pub const JRE_NATIVE_LIBS:&[&str] = &[];
-pub const JRE_VERSION:&[&str] = &["19.0"];
-pub const JRE_PREFERRED:& str = "DefaultVM";
-pub const SPLASH_SCREEN_IMAGE_PATH:Option<&'static str> = Some("path/toImage");
-
- */
-
 pub struct Jvm {
     path: PathBuf,
 }
