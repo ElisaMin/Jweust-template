@@ -1,8 +1,17 @@
 # Jweust !!! but template.
-JavaWindowsExecutableRust is a Rust-based executable launcher for Java.
+JavaWindowsExecutableRust is a Rust-based executable launcher for Java. but this repository is a template for gradle plugin.
+
+# Features
+ - Use Rust to create an exe launcher for Java programs.
+ - Get configuration from Gradle build tasks and convert to Rust code (var.rs).
+ - The var.rs file contains options such as working directory, log path, and Java options.
+ - Directly call Java.exe to run the jar.
+ - Error message box.
+ - Singleton EXE support.
 
 # Getting Started
 To use this project, you need to follow these steps:
+ - Config your Rust Environment.
  - Clone the repository to your local machine.  
  - Modify the var.rs file with the necessary configuration options for your project.  
  - Use ` cargo build  --release ` to compile the Rust code into an executable.    
