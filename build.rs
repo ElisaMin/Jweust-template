@@ -13,10 +13,10 @@ use src::var::*;
 
 fn convert_version(version: &str) -> (u16, u16, u16, u16) {
     let mut version = version.split('.');
-    let major = version.next().unwrap_or("0").parse().unwrap();
-    let minor = version.next().unwrap_or("0").parse().unwrap();
-    let build = version.next().unwrap_or("0").parse().unwrap();
-    let revision = version.next().unwrap_or("0").parse().unwrap();
+    let major = version.next().unwrap_or("0").parse().unwrap_or(0);
+    let minor = version.next().unwrap_or("0").parse().unwrap_or(0);
+    let build = version.next().unwrap_or("0").parse().unwrap_or(0);
+    let revision = version.next().unwrap_or("0").parse().unwrap_or(0);
     (major, minor, build, revision)
 }
 fn covert_version_to_u64(version: &str) -> u64 {
