@@ -25,21 +25,20 @@ impl Jvm {
 
     pub fn create() -> Option<Self> {
         let jvm_remember = workdir().join(".jvm");
-        let path = File::open(&jvm_remember );
-        let mut is_get = path.is_ok();
-        if let Ok(mut path) = path {
-            is_get = false;
+        if !jvm_remember.exists() {
+            let jvm = test_all_jvm().expect("没有JVM可用！");
+            let mut f = File::create(&jvm_remember).expect(format!("创建失败.jvm {jvm_remember:?}").as_str());
+            f.write_all(jvm.to_string_lossy().as_bytes()).expect(format!("写入.jvm失败 {jvm_remember:?}").as_str());
+        }
+        if let Ok(remembers) = File::open(&jvm_remember).as_mut() {
             let mut buf = String::new();
-            path.read_to_string(&mut buf).unwrap();
-            if test_path_if_is_jvm(Path::new(&buf)) {
+            remembers.read_to_string(&mut buf).unwrap();
+            let buf = PathBuf::from(buf);
+            if get_dll_if_jvm_in_(&buf).is_some() {
                 return Some(Self::new(Path::new(&buf).to_path_buf()));
             }
         }
-        let jvm = test_all_jvm().ok()?;
-        if !is_get {
-            File::create(&jvm_remember).unwrap().write_all(jvm.to_string_lossy().as_bytes()).unwrap();
-        }
-        Some(Self::new(test_all_jvm().ok()?))
+        None
     }
     pub fn new(path: PathBuf) -> Self {
         Self { path }
@@ -225,7 +224,7 @@ fn test_java_home() {
     );
 }
 
-pub fn get_version_from_(path:&PathBuf) -> StartJvmResult<String> {
+pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
     let jvm = {
         let i = InitArgsBuilder::default().build().unwrap();
         JavaVM::with_libjvm(i, || {
@@ -258,7 +257,7 @@ fn get_dll_if_jvm_in_(path:&PathBuf) ->Option<PathBuf> {
     if  p.exists() { return Some(p); }
     None
 }
-fn check_jvm_version(test:&str,range:(u8,u8))-> bool {
+fn check_jvm_version(test:&str,range:(&u8,&u8))-> bool {
     let mut test = test.split('.');
     let version = test.next().unwrap_or("0");
     let mut version = u8::from_str(version).unwrap_or(0);
@@ -267,105 +266,28 @@ fn check_jvm_version(test:&str,range:(u8,u8))-> bool {
         version = u8::from_str(next).unwrap_or(0);
     }
     let (start,end) = range;
-    version>=start && version<=end
+    version>= *start && version<= *end
 }
 
-fn test_path_if_is_jvm(path:&Path) ->bool {
-    path.exists() && path.join("bin").join("java.exe").exists() && path.join("server").join("jvm.dll").exists()
+// static ble
+fn searches() -> impl Iterator<Item = PathBuf> {
+    JRE_SEARCH_DIR.iter().map(|s|String::from(*s)).chain(
+    JRE_SEARCH_ENV.iter().filter_map(|&key| var(key).ok())
+    ).map(PathBuf::from)
 }
-
-fn test_version_in(versions:&[&str], version:&str) ->bool {
-    for v in versions {
-        if version.starts_with(v) { return true }
-    }
-    false
-}
-
-
-fn test_jvm_home_version<'a>(path: &'a Path, versions: &[&str]) -> Results<&'a Path> {
-    if let Ok(file) = File::open(path.join("release")) {
-        let version = BufReader::new(file)
-            .lines()
-            .flatten()
-            .find(|x| x.starts_with("JAVA_VERSION="));
-        if let Some(version) = version {
-            let version = version.trim_start_matches("JAVA_VERSION=").trim_matches('"');
-            if test_version_in(versions, version) {
-                return Ok(path)
-            }
-        }
-    }
-    let mut output = Command::new(path.join("bin").join("java.exe"))
-        .arg("-version")
-        .output()?;
-
-    if !output.status.success() {
-        let msg = format!(
-            "err to execute the java.exe from {:?} . \ncuz:\n{}\n{} ",
-            path, output.stdout.encode_from_std(), output.stderr.encode_from_std()
-        );
-        let msg = JvmError::failed(msg);
-        return Err(msg.into());
-    }
-    let output = output.stdout.encode_from_std();
-    let output = output
-        .lines()
+fn test_all_jvm() -> Option<PathBuf> {
+    let range = {
+        let i = JRE_VERSION.iter()
+            .filter_map(|str|u8::from_str(*str).ok());
+        (&i.clone().min().unwrap_or(11).clone(),&i.max().unwrap_or(29).clone())
+    };
+    // let range = (&range.0,&range.1);
+    searches().filter_map(|path|
+        get_version_from_(&path).map(|version|(path, version))  .ok()
+    ).filter(|(_,v)|
+        check_jvm_version(v,range)
+    ).map(|(path,_)| path)
         .next()
-        .and_then(|line| line.split(' ').nth(1));
-
-    if test_version_in(versions, output.expect("not found version")) {
-        Ok(path)
-    } else {
-        let err = JvmError::jvm_not_found(path.to_path_buf());
-        Err(err.into())
-    }
-}
-
-
-
-
-
-
-
-fn test_all_jvm() -> Result<PathBuf, String> {
-
-    let mut errors:Vec<String> = Vec::new();
-
-    let dirs = JRE_SEARCH_ENV
-        .iter()
-        .filter_map(|&key| {
-            var(key)
-                .map_err(|e| { errors.push(format!("{}: {}", key, e)); })
-                .ok()
-        })
-        .collect::<Vec<String>>();
-
-    let dirs = dirs
-        .iter()
-        .map(|s| s.as_str());
-
-    let dirs = JRE_SEARCH_DIR
-        .iter().copied()
-        .chain(dirs)
-        .map(Path::new)
-        // .map(|p| {
-        //
-        //     println!("found {}",p.display());
-        //     println!("found {}",p.exists());
-        //     p
-        // })
-        .filter(|path| path.exists())
-        .filter(|path| test_path_if_is_jvm(path))
-        .filter_map(|path|
-            test_jvm_home_version(path, JRE_VERSION)
-                .map_err(|e| { errors.push(e.to_string()); })
-                .ok()
-        ).map(|path| path.to_owned()).collect::<Vec<PathBuf>>();
-
-    dirs
-        .first()
-        .map(|buf|buf.to_owned())
-        .ok_or(format!("we cant find a jvm in the system, errors: {}", errors.join(", ")))
 }
 
 // jvm errors

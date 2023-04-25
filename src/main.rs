@@ -1,5 +1,7 @@
-#![feature(panic_info_message)]
 #![windows_subsystem = "windows"]
+#![feature(panic_info_message)]
+extern crate core;
+
 mod logs;
 mod var;
 mod jvm;
