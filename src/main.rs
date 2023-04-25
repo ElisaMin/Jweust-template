@@ -1,3 +1,4 @@
+#![feature(panic_info_message)]
 #![windows_subsystem = "windows"]
 mod logs;
 mod var;
