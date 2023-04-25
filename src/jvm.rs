@@ -1,18 +1,21 @@
 use std::cmp::Ordering;
 use std::env::{args, var};
+use std::fs::File;
+use std::{io, thread};
 use std::fmt::{Debug, Display, Formatter};
-use std::fs::{File};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::{io, panic, thread};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use crate::logs::LogFile;
-use crate::{Results, workdir};
+use std::str::FromStr;
+use jni::errors::StartJvmResult;
+use jni::{InitArgsBuilder, JavaVM};
+use jni::objects::{JString, JValue};
 use crate::charsets::CharsetConverter;
 use crate::kotlin::ScopeFunc;
+use crate::{Results, workdir};
+use crate::logs::LogFile;
 use crate::var::*;
-
 
 pub struct Jvm {
     path: PathBuf,
@@ -80,6 +83,7 @@ impl Jvm {
             // get args with index as [(i32, &str)]
             let args = args()
                 .skip(1) // skip the first arg and it is the path of the executable
+                // fixme console
                 .enumerate()
                 .map(|(i, arg)| (i as i32, arg))
                 .collect::<Vec<(i32, String)>>();
@@ -210,9 +214,66 @@ impl Jvm {
 
 
 
-fn test_path_if_is_jvm(path:&Path) ->bool {
-    path.exists() && path.join("bin").join("java.exe").exists()
+#[test]
+fn test_java_home() {
+    // hook_panic();
+    // let path = &PathBuf::from(var_os("JAVA_HOME").unwrap());
+    let path = &PathBuf::from("C:\\Heizi\\.jdks\\corretto-1.8.0_372");
+    let v = get_version_from_(path).unwrap();
+    println!("{}",v
+    //     // .join().unwrap()
+    );
 }
+
+pub fn get_version_from_(path:&PathBuf) -> StartJvmResult<String> {
+    let jvm = {
+        let i = InitArgsBuilder::default().build().unwrap();
+        JavaVM::with_libjvm(i, || {
+            Ok(get_dll_if_jvm_in_(path).unwrap())
+        })?
+    };
+    let jvm = &mut jvm.attach_current_thread()?;
+    // System.getProperty("java.specification.version")
+    let param = {
+        let tmp = jvm.find_class("java/lang/System")?;
+        let param = jvm.new_string("java.specification.version")?;
+        let param = &[JValue::from(&param)];
+        let param = jvm.
+            call_static_method(tmp, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", param )?.l()?;
+        param // result
+    };{ // to string
+        let param = JString::from(param);
+        let param = jvm.get_string(&param)?;
+        param.to_string_lossy().to_string()
+    }.transform(Ok)
+}
+
+
+fn get_dll_if_jvm_in_(path:&PathBuf) ->Option<PathBuf> {
+    let p = path
+        .join("bin").join("server").join("jvm.dll");
+    if  p.exists() { return Some(p); }
+    let p = path.join("jre")
+        .join("bin").join("server").join("jvm.dll");
+    if  p.exists() { return Some(p); }
+    None
+}
+fn check_jvm_version(test:&str,range:(u8,u8))-> bool {
+    let mut test = test.split('.');
+    let version = test.next().unwrap_or("0");
+    let mut version = u8::from_str(version).unwrap_or(0);
+    if  version<7 {
+        let next = test.next().unwrap_or("0");
+        version = u8::from_str(next).unwrap_or(0);
+    }
+    let (start,end) = range;
+    version>=start && version<=end
+}
+
+fn test_path_if_is_jvm(path:&Path) ->bool {
+    path.exists() && path.join("bin").join("java.exe").exists() && path.join("server").join("jvm.dll").exists()
+}
+
 fn test_version_in(versions:&[&str], version:&str) ->bool {
     for v in versions {
         if version.starts_with(v) { return true }
@@ -241,7 +302,7 @@ fn test_jvm_home_version<'a>(path: &'a Path, versions: &[&str]) -> Results<&'a P
     if !output.status.success() {
         let msg = format!(
             "err to execute the java.exe from {:?} . \ncuz:\n{}\n{} ",
-            path,output.stdout.encode_from_std(),output.stderr.encode_from_std()
+            path, output.stdout.encode_from_std(), output.stderr.encode_from_std()
         );
         let msg = JvmError::failed(msg);
         return Err(msg.into());
@@ -252,13 +313,15 @@ fn test_jvm_home_version<'a>(path: &'a Path, versions: &[&str]) -> Results<&'a P
         .next()
         .and_then(|line| line.split(' ').nth(1));
 
-    if test_version_in(versions, output.unwrap()) {
+    if test_version_in(versions, output.expect("not found version")) {
         Ok(path)
     } else {
         let err = JvmError::jvm_not_found(path.to_path_buf());
         Err(err.into())
     }
 }
+
+
 
 
 
