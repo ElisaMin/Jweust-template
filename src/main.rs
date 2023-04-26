@@ -70,12 +70,7 @@ fn main() -> Results<()> {
             Ok(())
         }
         Err(e) => {
-            let e = format!("{e}");
-            message_box(
-                String::from(&e),
-                String::from("JVM错误！"),
-                MB_OK|MB_ICONERROR
-            ).unwrap();
+            e.exit_msg_box();
             panic!("{e}");
         }
     }

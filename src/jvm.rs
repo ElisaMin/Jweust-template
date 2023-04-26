@@ -3,19 +3,30 @@ use std::env::{args, var};
 use std::fs::File;
 use std::{io, thread};
 use std::fmt::{Debug, Display, Formatter};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Error, Read, Write};
 use std::os::windows::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use jni::errors::StartJvmResult;
 use jni::{InitArgsBuilder, JavaVM};
 use jni::objects::{JString, JValue};
+use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONWARNING, MB_OK};
 use crate::charsets::CharsetConverter;
 use crate::kotlin::ScopeFunc;
-use crate::{Results, workdir};
+use crate::{exit, jvm, Results, workdir};
 use crate::logs::LogFile;
 use crate::var::*;
+
+
+// jvm errors
+// execute jvm error
+pub enum JvmError {
+    JvmNotFound(String),
+    JvmCacheFailed(PathBuf,String,Error),
+    // ExecuteFailed(String),
+    ExitCode(i32,String)
+}
 
 pub struct Jvm {
     path: PathBuf,
@@ -25,20 +36,26 @@ impl Jvm {
 
     pub fn create() -> Result<Self,JvmError> {
         let jvm_remember = workdir().join(".jvm");
+
         if !jvm_remember.exists() {
-            jvm_search_in_(&jvm_remember)?;
+            jvm_search_and_save(&jvm_remember)?;
         }
-        let mut jvm_remember = &File::open(&jvm_remember).expect(format!("打开失败 {jvm_remember:?}").as_str());
+
+        let mut file = File::open(&jvm_remember)
+            .cache_failed(&jvm_remember, "打开失败")?;
+
         let mut buf = String::new();
+        file.read_to_string(&mut buf)
+            .cache_failed(&jvm_remember, "读取失败")?;
 
-        jvm_remember.read_to_string(&mut buf).expect(format!("读取失败 {jvm_remember:?}").as_str());
-
+        let buf = buf.trim();
         let buf = PathBuf::from(buf);
 
         if get_dll_if_jvm_in_(&buf).is_some() {
-            return Ok(Self::new(Path::new(&buf).to_path_buf()));
+            Ok(Self{path: buf})
+        } else {
+            Err(JvmError::JvmNotFound("jvm.dll not found".to_string()))
         }
-        panic!("end of creating jvm")
     }
     pub fn new(path: PathBuf) -> Self {
         Self { path }
@@ -211,7 +228,7 @@ impl Jvm {
     }
 }
 
-fn jvm_search_in_(jvm_remember: &PathBuf) -> Result<(),JvmError> {
+fn jvm_search_and_save(jvm_remember: &PathBuf) -> Result<(),JvmError> {
     let (min_j, max_j) = JRE_VERSION;
 
     let jvm = jvm_searches();
@@ -228,8 +245,10 @@ fn jvm_search_in_(jvm_remember: &PathBuf) -> Result<(),JvmError> {
         let jvm = jvm.to_string_lossy();
         let jvm = jvm.to_string();
 
-        File::create(&jvm_remember).expect(format!(".jvm创建失败 {jvm_remember:?}").as_str())
-            .write_all(jvm.as_ref()).expect(format!(".jvm写入失败 {jvm_remember:?}").as_str());
+        File::create(&jvm_remember)
+            .cache_failed(jvm_remember,"创建失败")?
+            .write_all(jvm.as_ref())
+            .cache_failed(jvm_remember,"写入失败")?;
         Ok(())
     } else {
         // 没必要 但是强迫症（）
@@ -315,13 +334,7 @@ fn jvm_version_parsing(dirs:impl Iterator<Item = PathBuf>) -> impl Iterator<Item
     )
 }
 
-// jvm errors
-// execute jvm error
-pub enum JvmError {
-    JvmNotFound(String),
-    // ExecuteFailed(String),
-    ExitCode(i32,String)
-}
+
 impl JvmError {
     // pub fn failed(s: String) -> Self {
     //     Self::ExecuteFailed(s)
@@ -329,17 +342,57 @@ impl JvmError {
     // pub fn jvm_not_found(errors: String) -> Self {
     //     Self::JvmNotFound(errors)
     // }
+    fn cache_e(p: &PathBuf, r: String) -> Self {
+        let sys_err = Error::last_os_error();
+        Self::JvmCacheFailed(p.clone(),r,sys_err)
+    }
     pub fn exit_code(code: i32, s: String) -> Self {
         Self::ExitCode(code, s)
     }
+    pub fn exit_msg_box(&self) {
+        let mut msg = String::new();
+        let mut title = String::new();
+        let icon = match self {
+            Self::JvmNotFound(str) => {
+                title.push_str("错误:JVM搜索失败");
+                msg.push_str(str);
+                MB_ICONERROR
+            }
+            Self::JvmCacheFailed(path,reason,sys_err) => {
+                title.push_str(&*format!("{path:?}"));
+                msg.push_str(&*format!("- cache failed: {reason}\n- last error: {sys_err}"));
+                MB_ICONERROR
+            },
+            // JvmError::ExecuteFailed(s) => write!(f, "{}", s),
+            Self::ExitCode(code, s) => {
+                title.push_str(&*format!("JVM未能正常退出！{code}"));
+                msg.push_str(s.as_str());
+                MB_ICONWARNING
+            }
+        };
+        exit::message_box(msg,title,icon|MB_OK).unwrap();
+    }
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            JvmError::JvmNotFound(str) => {
+            Self::JvmNotFound(str) => {
                 write!(f, "{str}")
             }
+            Self::JvmCacheFailed(path,reason,sys_err) => {
+                write!(f,"{path:?} \n- cache failed: {reason}\n- last error: {sys_err} ")
+            },
             // JvmError::ExecuteFailed(s) => write!(f, "{}", s),
-            JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} \nreason:\n{}", code, s)
+            Self::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} \nreason:\n{}", code, s)
         }
+    }
+}
+
+trait ErrorJvmExt<T> {
+    fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError>;
+}
+
+impl<T, E> ErrorJvmExt<T> for Result<T, E> {
+    fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError> {
+        self.map_err(|_| JvmError::cache_e(p, reason.to_string()))
     }
 }
 
