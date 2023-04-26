@@ -23,22 +23,50 @@ pub struct Jvm {
 
 impl Jvm {
 
-    pub fn create() -> Option<Self> {
+    pub fn create() -> Result<Self,JvmError> {
         let jvm_remember = workdir().join(".jvm");
         if !jvm_remember.exists() {
-            let jvm = test_all_jvm().expect("没有JVM可用！");
-            let mut f = File::create(&jvm_remember).expect(format!("创建失败.jvm {jvm_remember:?}").as_str());
-            f.write_all(jvm.to_string_lossy().as_bytes()).expect(format!("写入.jvm失败 {jvm_remember:?}").as_str());
+            let range = {
+                let i = JRE_VERSION.iter()
+                    .filter_map(|str|u8::from_str(*str).ok());
+                (&i.clone().min().unwrap_or(11).clone(),&i.max().unwrap_or(29).clone())
+            };
+            // let range = (&range.0,&range.1);
+            let jvm = jvm_searches();
+            let jvm = jvm_version_parsing(jvm);
+
+            let jvm = jvm.collect::<Vec<(PathBuf,String)>>();
+
+            
+            if let Some((jvm,_)) = jvm.iter()
+                .filter(|(_,v)|
+                    check_jvm_version(v,range)
+                ).next() {
+                let mut f = File::create(&jvm_remember).expect(format!("创建失败.jvm {jvm_remember:?}").as_str());
+                f.write_all(jvm.to_string_lossy().as_bytes()).expect(format!("写入.jvm失败 {jvm_remember:?}").as_str());
+            } else {
+                let mut buf = String::new();
+                jvm.iter()
+                    .map(|(p,v)|
+                        format!("{p:?} found versions {v} 's jvm\n"))
+                    .collect_into(&mut buf);
+                buf.push_str(&*format!("but not in version supported jvm 's version : {}..{}",range.0,range.1));
+                return Err(JvmError::JvmNotFound(buf))
+
+            };
+
         }
-        if let Ok(remembers) = File::open(&jvm_remember).as_mut() {
-            let mut buf = String::new();
-            remembers.read_to_string(&mut buf).unwrap();
-            let buf = PathBuf::from(buf);
-            if get_dll_if_jvm_in_(&buf).is_some() {
-                return Some(Self::new(Path::new(&buf).to_path_buf()));
-            }
+        let mut jvm_remember = &File::open(&jvm_remember).expect(format!("打开失败 {jvm_remember:?}").as_str());
+        let mut buf = String::new();
+
+        jvm_remember.read_to_string(&mut buf).expect(format!("读取失败 {jvm_remember:?}").as_str());
+
+        let buf = PathBuf::from(buf);
+
+        if get_dll_if_jvm_in_(&buf).is_some() {
+            return Ok(Self::new(Path::new(&buf).to_path_buf()));
         }
-        None
+        panic!("end of creating jvm")
     }
     pub fn new(path: PathBuf) -> Self {
         Self { path }
@@ -215,13 +243,9 @@ impl Jvm {
 
 #[test]
 fn test_java_home() {
-    // hook_panic();
-    // let path = &PathBuf::from(var_os("JAVA_HOME").unwrap());
-    let path = &PathBuf::from("C:\\Heizi\\.jdks\\corretto-1.8.0_372");
+    let path = &PathBuf::from(var("JAVA_HOME").unwrap());
     let v = get_version_from_(path).unwrap();
-    println!("{}",v
-    //     // .join().unwrap()
-    );
+    println!("{}",v);
 }
 
 pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
@@ -270,50 +294,40 @@ fn check_jvm_version(test:&str,range:(&u8,&u8))-> bool {
 }
 
 // static ble
-fn searches() -> impl Iterator<Item = PathBuf> {
+fn jvm_searches() -> impl Iterator<Item = PathBuf> {
     JRE_SEARCH_DIR.iter().map(|s|String::from(*s)).chain(
     JRE_SEARCH_ENV.iter().filter_map(|&key| var(key).ok())
     ).map(PathBuf::from)
 }
-fn test_all_jvm() -> Option<PathBuf> {
-    let range = {
-        let i = JRE_VERSION.iter()
-            .filter_map(|str|u8::from_str(*str).ok());
-        (&i.clone().min().unwrap_or(11).clone(),&i.max().unwrap_or(29).clone())
-    };
-    // let range = (&range.0,&range.1);
-    searches().filter_map(|path|
+fn jvm_version_parsing(dirs:impl Iterator<Item = PathBuf>) -> impl Iterator<Item = (PathBuf,String)> {
+    dirs.filter_map(|path|
         get_version_from_(&path).map(|version|(path, version))  .ok()
-    ).filter(|(_,v)|
-        check_jvm_version(v,range)
-    ).map(|(path,_)| path)
-        .next()
+    )
 }
 
 // jvm errors
 // execute jvm error
-enum JvmError {
-    JvmNotFound(PathBuf),
-    ExecuteFailed(String),
+pub enum JvmError {
+    JvmNotFound(String),
+    // ExecuteFailed(String),
     ExitCode(i32,String)
 }
 impl JvmError {
-    pub fn failed(s: String) -> Self {
-        Self::ExecuteFailed(s)
-    }
-    pub fn jvm_not_found(p: PathBuf) -> Self {
-        Self::JvmNotFound(p)
-    }
+    // pub fn failed(s: String) -> Self {
+    //     Self::ExecuteFailed(s)
+    // }
+    // pub fn jvm_not_found(errors: String) -> Self {
+    //     Self::JvmNotFound(errors)
+    // }
     pub fn exit_code(code: i32, s: String) -> Self {
         Self::ExitCode(code, s)
     }
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            JvmError::JvmNotFound(p) => {
-                let p = p.to_str().unwrap_or_default();
-                write!(f, "Jvm not found in path: {}", p)
-            },
-            JvmError::ExecuteFailed(s) => write!(f, "{}", s),
+            JvmError::JvmNotFound(str) => {
+                write!(f, "{str}")
+            }
+            // JvmError::ExecuteFailed(s) => write!(f, "{}", s),
             JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} reason:\n{}", code, s)
         }
     }

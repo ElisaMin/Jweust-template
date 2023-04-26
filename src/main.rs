@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 #![feature(panic_info_message)]
+#![feature(iter_collect_into)]
 extern crate core;
 
 mod logs;
@@ -13,7 +14,8 @@ use std::process::{exit};
 use once_cell::sync::Lazy;
 use windows::core::{ HSTRING, PCWSTR};
 use windows::Win32::System::Console::{AllocConsole, FreeConsole};
-use crate::exit::{if_check_utf8};
+use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK};
+use crate::exit::{if_check_utf8, message_box};
 use crate::jvm::Jvm;
 use crate::kotlin::ScopeFunc;
 use crate::logs::hook_panic;
@@ -44,7 +46,7 @@ fn workdir()->PathBuf {
     _WORKDIR.clone()
 
 }
-fn main() {
+fn main() -> Results<()> {
     // set_current_dir(workdir()).unwrap();
     // None means CLI enabling
     if let Some(cli_command) = APPLICATION_WITH_OUT_CLI {
@@ -61,7 +63,22 @@ fn main() {
      exit::if_instance_exist().unwrap();
     if_check_utf8();
     hook_panic();
-    Jvm::create().unwrap().invoke().unwrap();
+    let jvm = Jvm::create();
+    match jvm {
+        Ok(jvm) => {
+            jvm.invoke().unwrap();
+            Ok(())
+        }
+        Err(e) => {
+            let e = format!("{e}");
+            message_box(
+                String::from(&e),
+                String::from("JVM错误！"),
+                MB_OK|MB_ICONERROR
+            ).unwrap();
+            panic!("{e}");
+        }
+    }
 }
 
 mod exit {
