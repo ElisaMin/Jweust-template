@@ -326,7 +326,7 @@ impl JvmError {
                 write!(f, "{str}")
             }
             // JvmError::ExecuteFailed(s) => write!(f, "{}", s),
-            JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} reason:\n{}", code, s)
+            JvmError::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} \nreason:\n{}", code, s)
         }
     }
 }
