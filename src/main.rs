@@ -70,8 +70,7 @@ fn main() -> Results<()> {
             Ok(())
         }
         Err(e) => {
-            e.exit_msg_box();
-            panic!("{e}");
+            panic!("{}",e.exit_msg_box());
         }
     }
 }

@@ -349,13 +349,13 @@ impl JvmError {
     pub fn exit_code(code: i32, s: String) -> Self {
         Self::ExitCode(code, s)
     }
-    pub fn exit_msg_box(&self) {
+    pub fn exit_msg_box(self) -> String {
         let mut msg = String::new();
         let mut title = String::new();
         let icon = match self {
             Self::JvmNotFound(str) => {
                 title.push_str("错误:JVM搜索失败");
-                msg.push_str(str);
+                msg.push_str(&*str);
                 MB_ICONERROR
             }
             Self::JvmCacheFailed(path,reason,sys_err) => {
@@ -363,14 +363,21 @@ impl JvmError {
                 msg.push_str(&*format!("- cache failed: {reason}\n- last error: {sys_err}"));
                 MB_ICONERROR
             },
-            // JvmError::ExecuteFailed(s) => write!(f, "{}", s),
+            // JvmError::ExecuteFailed(s) => {
+            //     title.push_str("错误");
+            //     msg.push_str(s.as_str());
+            //     MB_ICONERROR
+            // },
             Self::ExitCode(code, s) => {
                 title.push_str(&*format!("JVM未能正常退出！{code}"));
                 msg.push_str(s.as_str());
                 MB_ICONWARNING
             }
         };
+        let mut sum = String::new();
+        sum.push_str(&*format!("{}\n{}",title,msg));
         exit::message_box(msg,title,icon|MB_OK).unwrap();
+        sum
     }
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
