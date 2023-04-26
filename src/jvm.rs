@@ -27,29 +27,39 @@ impl Jvm {
         let jvm_remember = workdir().join(".jvm");
         if !jvm_remember.exists() {
             let (min_j,max_j) = JRE_VERSION;
+
             let jvm = jvm_searches();
             let jvm = jvm_version_parsing(jvm);
 
-            let jvm = jvm.collect::<Vec<(PathBuf,String)>>();
+            let mut jvm = jvm.collect::<Vec<(PathBuf, String)>>();
             
             if let Some((jvm,_)) = jvm.iter()
                 .filter(|(_,v)|
                     check_jvm_version(v,(&min_j,&max_j))
-                ).next() {
-                let mut f = File::create(&jvm_remember).expect(format!("创建失败.jvm {jvm_remember:?}").as_str());
-                f.write_all(jvm.to_string_lossy().as_bytes()).expect(format!("写入.jvm失败 {jvm_remember:?}").as_str());
-            } else {
-                let mut buf = String::new();
-                jvm.iter()
-                    .map(|(p,v)|
-                        format!("{p:?} found versions {v} 's jvm\n"))
-                    .collect_into(&mut buf);
+                ).next()
+            {
+                let jvm = jvm.clone();
+                let jvm = jvm.to_string_lossy();
+                let jvm = jvm.to_string();
 
+                File::create(&jvm_remember).expect(format!(".jvm创建失败 {jvm_remember:?}").as_str())
+                    .write_all(jvm.as_ref()).expect(format!(".jvm写入失败 {jvm_remember:?}").as_str());
+            } else {
+                // 没必要 但是强迫症（）
+                let mut jvm = {
+                    let mut buf = String::new();
+                    jvm.iter()
+                        .map(|(p,v)|
+                            format!("{p:?} found versions {v} 's jvm\n"))
+                        .collect_into(&mut buf);
+                    jvm.clear();
+                    buf
+                };
                 let min_j = if min_j<6 {format!("{min_j}")} else { String::from("undefined")};
                 let max_j = if max_j>40 {format!("{max_j}")} else { String::from("unlimited")};
 
-                buf.push_str(&*format!("but not in version supported jvm 's version : {}..{}",min_j,max_j));
-                return Err(JvmError::JvmNotFound(buf))
+                jvm.push_str(&*format!("but not in version supported jvm 's version : {}..{}", min_j, max_j));
+                return Err(JvmError::JvmNotFound(jvm))
 
             };
 
