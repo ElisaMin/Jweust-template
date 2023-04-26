@@ -56,7 +56,7 @@ pub const JRE_SEARCH_DIR:&[&str] = &["./lib/runtime"];
 pub const JRE_SEARCH_ENV:&[&str] = &["JAVA_HOME"];
 pub const JRE_OPTIONS:&[&str] = &[];
 pub const JRE_NATIVE_LIBS:&[&str] = &[];
-pub const JRE_VERSION:&[&str] = &["19.0"];
+pub const JRE_VERSION:(u8,u8) = (19,u8::MAX);
 pub const JRE_PREFERRED:& str = "DefaultVM";
 pub const SPLASH_SCREEN_IMAGE_PATH:Option<&'static str> = Some("H:\\tupm\\ic_ast_ugly.png");
 
