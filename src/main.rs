@@ -16,7 +16,7 @@ use windows::core::{ HSTRING, PCWSTR};
 use windows::Win32::System::Console::{AllocConsole, FreeConsole};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK};
 use crate::exit::{if_check_utf8, message_box};
-use crate::jvm::Jvm;
+use crate::jvm::{Jvm, JvmError};
 use crate::kotlin::ScopeFunc;
 use crate::logs::hook_panic;
 use crate::var::{APPLICATION_WITH_OUT_CLI, EXE_IS_INSTANCE, EXE_PRODUCT_NAME, WORKDIR};
@@ -63,16 +63,9 @@ fn main() -> Results<()> {
      exit::if_instance_exist().unwrap();
     if_check_utf8();
     hook_panic();
-    let jvm = Jvm::create();
-    match jvm {
-        Ok(jvm) => {
-            jvm.invoke().unwrap();
-            Ok(())
-        }
-        Err(e) => {
-            panic!("{}",e.exit_msg_box());
-        }
-    }
+    let result = Jvm::create();
+    let result= exit::jvm(result).invoke();
+    Ok(exit::jvm(result))
 }
 
 mod exit {
@@ -80,6 +73,7 @@ mod exit {
     #![allow(dead_code)]
 
     use std::{env, process};
+    use std::any::Any;
     use std::io::Error;
     use std::panic::catch_unwind;
     use std::path::PathBuf;
@@ -92,9 +86,20 @@ mod exit {
     use windows::Win32::System::ProcessStatus::{EnumProcesses, GetModuleFileNameExW};
     use crate::kotlin::ScopeFunc;
     use crate::{Results, wstr};
+    use crate::jvm::JvmError;
     use crate::var::CHARSET_PAGE_CODE;
 
 
+    pub fn jvm<R>(from:Result<R,JvmError>) -> R  {
+        match from  {
+            Ok(r) => {
+                return r;
+            }
+            Err(e) => {
+                panic!("{}",e.exit_msg_box());
+            }
+        }
+    }
     pub fn if_instance_exist() ->Results<()> {
         let selfs =  found_process_by_path(env::current_exe()?);
         if selfs.len() > 1 {

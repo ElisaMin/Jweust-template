@@ -24,7 +24,7 @@ use crate::var::*;
 pub enum JvmError {
     JvmNotFound(String),
     JvmCacheFailed(PathBuf,String,Error),
-    // ExecuteFailed(String),
+    ChildProcessExit(Box<dyn std::error::Error>),
     ExitCode(i32,String)
 }
 
@@ -137,7 +137,7 @@ impl Jvm {
         }
     }
 
-    pub fn invoke(&self) -> Results<()> {
+    pub fn invoke(&self) -> Result<(),JvmError> {
         // command prepare
         let mut command = Command::new(self.path.join("bin").join("java.exe"));
         let child = {
@@ -151,11 +151,10 @@ impl Jvm {
             // }
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
-            command.spawn()?
+            command.spawn().launch_failed()?
 
         };
-        self._next(child).unwrap();
-        // set log
+        self._next(child)?;
         Ok(())
     }
     fn read_till_line<F>(reader: &mut dyn BufRead, mut callback: F) -> io::Result<()>
@@ -190,7 +189,7 @@ impl Jvm {
         })?;
         Ok(r)
     }
-    fn _next(&self, mut command:Child) -> Results<()> {
+    fn _next(&self, mut command:Child) -> Result<(),JvmError> {
         let out = command.stdout.take().map(|stdout| {
             thread::spawn(move || {
                 let log = Self::get_file_by_log(LOG_STDOUT_PATH, "log")?;
@@ -203,7 +202,8 @@ impl Jvm {
                 Jvm::read_std(stderr, log, true)
             })
         });
-        let exit_code = command.wait_with_output()?;
+        let exit_code = command.wait_with_output()
+            .launch_failed()?;
         let out =  out.map(|out|
             out.join().unwrap().unwrap()
         );
@@ -336,9 +336,9 @@ fn jvm_version_parsing(dirs:impl Iterator<Item = PathBuf>) -> impl Iterator<Item
 
 
 impl JvmError {
-    // pub fn failed(s: String) -> Self {
-    //     Self::ExecuteFailed(s)
-    // }
+    pub fn failed(s: Box<dyn std::error::Error>) -> Self {
+        Self::ChildProcessExit(s)
+    }
     // pub fn jvm_not_found(errors: String) -> Self {
     //     Self::JvmNotFound(errors)
     // }
@@ -363,13 +363,14 @@ impl JvmError {
                 msg.push_str(&*format!("- cache failed: {reason}\n- last error: {sys_err}"));
                 MB_ICONERROR
             },
-            // JvmError::ExecuteFailed(s) => {
-            //     title.push_str("错误");
-            //     msg.push_str(s.as_str());
-            //     MB_ICONERROR
-            // },
+            JvmError::ChildProcessExit(s) => {
+                title.push_str("ERROR BY NOTHINGS");
+                msg.push_str(
+                    &*format!("JVM未能正常退出！\n{err}",err=s));
+                MB_ICONERROR
+            },
             Self::ExitCode(code, s) => {
-                title.push_str(&*format!("JVM未能正常退出！{code}"));
+                title.push_str(&*format!("ERROR BY CODE : {code}"));
                 msg.push_str(s.as_str());
                 MB_ICONWARNING
             }
@@ -387,7 +388,7 @@ impl JvmError {
             Self::JvmCacheFailed(path,reason,sys_err) => {
                 write!(f,"{path:?} \n- cache failed: {reason}\n- last error: {sys_err} ")
             },
-            // JvmError::ExecuteFailed(s) => write!(f, "{}", s),
+            JvmError::ChildProcessExit(s) => write!(f, "{}", s),
             Self::ExitCode(code, s) => write!(f, "jvm execute is failed; \nby code:{} \nreason:\n{}", code, s)
         }
     }
@@ -395,11 +396,15 @@ impl JvmError {
 
 trait ErrorJvmExt<T> {
     fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError>;
+    fn launch_failed(self) -> Result<T, JvmError>;
 }
 
-impl<T, E> ErrorJvmExt<T> for Result<T, E> {
+impl<T, E> ErrorJvmExt<T> for Result<T, E> where E:Into< Box<dyn std::error::Error>> {
     fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError> {
         self.map_err(|_| JvmError::cache_e(p, reason.to_string()))
+    }
+    fn launch_failed(self) -> Result<T, JvmError> {
+        self.map_err(|e| JvmError::failed(e.into()))
     }
 }
 
