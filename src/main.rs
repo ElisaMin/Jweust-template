@@ -9,15 +9,14 @@ mod jvm;
 mod charsets;
 use std::env::{args, current_dir};
 use std::fs::{create_dir_all};
+use std::iter::Iterator;
 use std::path::PathBuf;
 use std::process::{exit};
 use once_cell::sync::Lazy;
 use windows::core::{ HSTRING, PCWSTR};
 use windows::Win32::System::Console::{AllocConsole, FreeConsole};
-use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK};
-use crate::exit::{if_check_utf8, message_box};
-use crate::jvm::{Jvm, JvmError};
-use crate::kotlin::ScopeFunc;
+use crate::exit::{if_check_utf8};
+use crate::jvm::{Jvm};
 use crate::logs::hook_panic;
 use crate::var::{APPLICATION_WITH_OUT_CLI, EXE_IS_INSTANCE, EXE_PRODUCT_NAME, WORKDIR};
 
@@ -46,17 +45,44 @@ fn workdir()->PathBuf {
     _WORKDIR.clone()
 
 }
+static mut ARGS_OS:Vec<String>  = vec![];
+
+pub fn args_os_() -> &'static mut Vec<String> {
+    unsafe { &mut ARGS_OS }
+}
+fn check_cli_enabled() { unsafe {
+    args().collect_into(&mut ARGS_OS);
+    let args = args_os_();
+    //remove file from
+    args.remove(0);
+
+    let mut enable = false;
+    if let Some(cli_command) = APPLICATION_WITH_OUT_CLI {
+        match cli_command {
+            None => {
+                enable = true
+            }
+            Some(cli_command) => {
+                enable = args
+                .iter()
+                .enumerate()
+                .find(|(_,arg)| arg == &cli_command)
+                .map(|(index,_)| ARGS_OS.remove(index))
+                .is_some();
+            }
+        }
+    }
+    if enable {
+        AllocConsole();
+    }
+    else {
+        FreeConsole();
+    };
+} }
+
 fn main() -> Results<()> {
     // set_current_dir(workdir()).unwrap();
-    // None means CLI enabling
-    if let Some(cli_command) = APPLICATION_WITH_OUT_CLI {
-        cli_command.is_some() && args().collect::<Vec<String>>().contains(&cli_command.unwrap().to_string())
-    } else {
-        true
-    }.transform(|e| unsafe {
-        if e { AllocConsole(); }
-        else { FreeConsole(); };
-    });
+    check_cli_enabled();
     if EXE_IS_INSTANCE {
         exit::if_instance_exist().unwrap();
     }
