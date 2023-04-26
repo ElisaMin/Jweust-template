@@ -14,7 +14,7 @@ use jni::objects::{JString, JValue};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONWARNING, MB_OK};
 use crate::charsets::CharsetConverter;
 use crate::kotlin::ScopeFunc;
-use crate::{exit, jvm, Results, workdir};
+use crate::{args_os_, exit, workdir};
 use crate::logs::LogFile;
 use crate::var::*;
 
@@ -30,11 +30,12 @@ pub enum JvmError {
 
 pub struct Jvm {
     path: PathBuf,
+    command:Vec<String> ,
 }
 
 impl Jvm {
 
-    pub fn create() -> Result<Self,JvmError> {
+    pub fn create() -> Result<Self, JvmError> {
         let jvm_remember = workdir().join(".jvm");
 
         if !jvm_remember.exists() {
@@ -52,17 +53,25 @@ impl Jvm {
         let buf = PathBuf::from(buf);
 
         if get_dll_if_jvm_in_(&buf).is_some() {
-            Ok(Self{path: buf})
+            Ok(Self::new(buf))
         } else {
             Err(JvmError::JvmNotFound("jvm.dll not found".to_string()))
         }
     }
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            command: Vec::new(),
+        }
     }
+}
+
+
+// commands
+impl Jvm {
     // java *JRE_OPTIONS -cp *FILES -jar Files[Launcher] -a -c
-    fn command_args(&self) -> Vec<String> {
-        let mut command_args = Vec::new();
+    fn command_args(&mut self) -> &Vec<String> {
+        let command_args = &mut self.command;
         // push all jre opts
         for opt in JRE_OPTIONS {
             command_args.push(opt.to_string());
@@ -74,7 +83,7 @@ impl Jvm {
             }
         }
         if let Some(img) = SPLASH_SCREEN_IMAGE_PATH {
-            command_args.push("-splash:".to_string()+img);
+            command_args.push("-splash:".to_string() + img);
             // command_args.push(img.to_string());
         }
         // get main file and drop it out from FILES
@@ -88,20 +97,23 @@ impl Jvm {
             } else {
                 vec![String::from("-jar"), String::from(jars.remove(JAR_LAUNCHER_FILE))]
             };
-            command_args.push("-cp".to_string());
-            command_args.push(jars.iter().map(|jar| jar.to_string()).collect::<Vec<String>>().join(";"));
+            // push all jars
+            let jars = jars.iter().map(|jar| jar.to_string()).collect::<Vec<String>>();
+            if !jars.is_empty() {
+                command_args.push("-cp".to_string());
+                command_args.push(jars.join(";"))
+            }
             // push all
             command_args.extend(after_commands);
-
         }
         // push all args from system and mix up with index
         {
             // get args with index as [(i32, &str)]
-            let args = args()
+            let args = args_os_().iter()
                 .skip(1) // skip the first arg and it is the path of the executable
                 // fixme console
                 .enumerate()
-                .map(|(i, arg)| (i as i32, arg))
+                .map(|(i, arg)| (i as i32, arg.clone()))
                 .collect::<Vec<(i32, String)>>();
             // join all args
             let mut args = args.iter()
@@ -118,11 +130,18 @@ impl Jvm {
                 .iter()
                 .map(|(_, arg)| arg.to_string())
                 .for_each(|arg| command_args.push(arg));
-        }
-
-
-        command_args
+        };
+        &self.command
     }
+}
+
+
+
+
+
+
+impl Jvm {
+
     #[inline]
     fn get_file_by_log(data:Option<(Option<&str>,bool)>,log:&str) -> io::Result<Option<File>> {
         if let Some((name_or,overwrite)) = data {
@@ -137,11 +156,12 @@ impl Jvm {
         }
     }
 
-    pub fn invoke(&self) -> Result<(),JvmError> {
+    pub fn invoke(&mut self) -> Result<(),JvmError> {
         // command prepare
         let mut command = Command::new(self.path.join("bin").join("java.exe"));
         let child = {
             command.creation_flags(0x08000000);
+
             command.args(self.command_args());
             // workdir
             command.current_dir(&workdir());
@@ -152,8 +172,8 @@ impl Jvm {
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
             command.spawn().launch_failed()?
-
         };
+        self.command.clear(); // moved
         self._next(child)?;
         Ok(())
     }
@@ -276,6 +296,18 @@ fn test_java_home() {
     let v = get_version_from_(path).unwrap();
     println!("{}",v);
 }
+#[test]
+fn test_commands() {
+    let mut jvm = Jvm::new(PathBuf::from("."));
+    println!(
+        "commands\n{:?}",jvm.command_args()
+    );
+    println!("lines");
+    jvm.command.iter().for_each(|l| {
+        println!("{}",l);
+    });
+}
+
 
 pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
     let jvm = {
