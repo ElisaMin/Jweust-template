@@ -70,7 +70,7 @@ impl Jvm {
 // commands
 impl Jvm {
     // java *JRE_OPTIONS -cp *FILES -jar Files[Launcher] -a -c
-    fn command_args(&mut self) -> &Vec<String> {
+    fn command_args(&mut self) -> Result<&Vec<String>,JvmError> {
         let command_args = &mut self.command;
         // push all jre opts
         for opt in JRE_OPTIONS {
@@ -96,7 +96,7 @@ impl Jvm {
                 vec![String::from(main_class)]
             } else {
                 let jar = jars.remove(JAR_LAUNCHER_FILE);
-                let jar = includes::jar_locate(jar);
+                let jar = includes::jar_locate(jar)?;
                 vec!["-jar".into(), jar]
             };
             // push all jars
@@ -133,7 +133,7 @@ impl Jvm {
                 .map(|(_, arg)| arg.to_string())
                 .for_each(|arg| command_args.push(arg));
         };
-        &self.command
+        Ok(&self.command)
     }
 }
 
@@ -164,7 +164,7 @@ impl Jvm {
         let child = {
             command.creation_flags(0x08000000);
 
-            command.args(self.command_args());
+            command.args(self.command_args()?);
             // workdir
             command.current_dir(&workdir());
             // set env
@@ -300,7 +300,7 @@ fn test_java_home() {
 fn test_commands() {
     let mut jvm = Jvm::new(PathBuf::from("."));
     println!(
-        "commands\n{:?}",jvm.command_args()
+        "commands\n{:?}",jvm.command_args().unwrap()
     );
     println!("lines");
     jvm.command.iter().for_each(|l| {
@@ -309,7 +309,7 @@ fn test_commands() {
 }
 
 
-pub fn get_version_from_(path: &PathBuf) -> Result<String,JvmError> {
+pub fn get_version_from_(path: &Path) -> Result<String,JvmError> {
     let p = get_dll_if_jvm_in_(path)
         .ok_or(JvmError::JvmNotFound(String::from("not found")))?;
     let i = InitArgsBuilder::default().build().launch_failed()?;
@@ -337,7 +337,7 @@ fn invoke_get_version(validated:PathBuf,i:InitArgs) -> StartJvmResult<String> {
     }.transform(Ok)
 }
 
-fn get_dll_if_jvm_in_(path:&PathBuf) ->Option<PathBuf> {
+fn get_dll_if_jvm_in_(path:&Path) ->Option<PathBuf> {
     let p = path
         .join("bin").join("server").join("jvm.dll");
     if  p.exists() { return Some(p); }
@@ -391,7 +391,7 @@ impl JvmError {
         let icon = match self {
             Self::JvmNotFound(str) => {
                 title.push_str("错误:JVM搜索失败");
-                msg.push_str(&*str);
+                msg.push_str(&str);
                 MB_ICONERROR
             }
             Self::JvmCacheFailed(path,reason,sys_err) => {
@@ -412,7 +412,7 @@ impl JvmError {
             }
         };
         let mut sum = String::new();
-        sum.push_str(&*format!("{}\n{}",title,msg));
+        sum.push_str(&format!("{}\n{}",title,msg));
         exit::message_box(msg,title,icon|MB_OK).unwrap();
         sum
     }
@@ -430,7 +430,7 @@ impl JvmError {
     }
 }
 
-trait ErrorJvmExt<T> {
+pub trait ErrorJvmExt<T> {
     fn cache_failed(self,p:&Path,reason:&str) -> Result<T, JvmError>;
     fn launch_failed(self) -> Result<T, JvmError>;
 }
