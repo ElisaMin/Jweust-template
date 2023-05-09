@@ -5,11 +5,11 @@ use std::{io, thread};
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{BufRead, BufReader, Error, Read, Write};
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use jni::errors::StartJvmResult;
-use jni::{InitArgsBuilder, JavaVM};
+use jni::{InitArgs, InitArgsBuilder, JavaVM};
 use jni::objects::{JString, JValue};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONWARNING, MB_OK};
 use crate::charsets::CharsetConverter;
@@ -243,7 +243,7 @@ impl Jvm {
             //     let _ = f.write_all(reason.as_bytes());
             // }
             let err = JvmError::exit_code(exit_code.status.code().unwrap_or(-1), reason);
-            Err(err.into())
+            Err(err)
         } else {
             Ok(())
         }
@@ -258,16 +258,14 @@ fn jvm_search_and_save(jvm_remember: &PathBuf) -> Result<(),JvmError> {
 
     let mut jvm = jvm.collect::<Vec<(PathBuf, String)>>();
 
-    if let Some((jvm, _)) = jvm.iter()
-        .filter(|(_, v)|
-            check_jvm_version(v, (&min_j, &max_j))
-        ).next()
-    {
+    if let Some((jvm, _)) = jvm.iter().find(|(_, v)|
+        check_jvm_version(v, (&min_j, &max_j))
+    ) {
         let jvm = jvm.clone();
         let jvm = jvm.to_string_lossy();
         let jvm = jvm.to_string();
 
-        File::create(&jvm_remember)
+        File::create(jvm_remember)
             .cache_failed(jvm_remember,"创建失败")?
             .write_all(jvm.as_ref())
             .cache_failed(jvm_remember,"写入失败")?;
@@ -286,7 +284,7 @@ fn jvm_search_and_save(jvm_remember: &PathBuf) -> Result<(),JvmError> {
         let min_j = if min_j < 6 { format!("{min_j}") } else { String::from("undefined") };
         let max_j = if max_j > 40 { format!("{max_j}") } else { String::from("unlimited") };
 
-        jvm.push_str(&*format!("but not in version supported jvm 's version : {}..{}", min_j, max_j));
+        jvm.push_str(&format!("but not in version supported jvm 's version : {}..{}", min_j, max_j));
         Err(JvmError::JvmNotFound(jvm))
     }
 }
@@ -311,12 +309,17 @@ fn test_commands() {
 }
 
 
-pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
+pub fn get_version_from_(path: &PathBuf) -> Result<String,JvmError> {
+    let p = get_dll_if_jvm_in_(path)
+        .ok_or(JvmError::JvmNotFound(String::from("not found")))?;
+    let i = InitArgsBuilder::default().build().launch_failed()?;
+    invoke_get_version(p,i).launch_failed()
+
+}
+fn invoke_get_version(validated:PathBuf,i:InitArgs) -> StartJvmResult<String> {
     let jvm = {
-        let i = InitArgsBuilder::default().build().unwrap();
-        JavaVM::with_libjvm(i, || {
-            Ok(get_dll_if_jvm_in_(path).unwrap())
-        })?
+        let validated = Ok(validated);
+        JavaVM::with_libjvm(i, || { validated })?
     };
     let jvm = &mut jvm.attach_current_thread()?;
     // System.getProperty("java.specification.version")
@@ -333,7 +336,6 @@ pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
         param.to_string_lossy().to_string()
     }.transform(Ok)
 }
-
 
 fn get_dll_if_jvm_in_(path:&PathBuf) ->Option<PathBuf> {
     let p = path
@@ -376,9 +378,9 @@ impl JvmError {
     // pub fn jvm_not_found(errors: String) -> Self {
     //     Self::JvmNotFound(errors)
     // }
-    fn cache_e(p: &PathBuf, r: String) -> Self {
+    fn cache_e(p: &Path, r: String) -> Self {
         let sys_err = Error::last_os_error();
-        Self::JvmCacheFailed(p.clone(),r,sys_err)
+        Self::JvmCacheFailed(PathBuf::from(p), r, sys_err)
     }
     pub fn exit_code(code: i32, s: String) -> Self {
         Self::ExitCode(code, s)
@@ -393,18 +395,18 @@ impl JvmError {
                 MB_ICONERROR
             }
             Self::JvmCacheFailed(path,reason,sys_err) => {
-                title.push_str(&*format!("{path:?}"));
-                msg.push_str(&*format!("- cache failed: {reason}\n- last error: {sys_err}"));
+                title.push_str(&format!("{path:?}"));
+                msg.push_str(&format!("- cache failed: {reason}\n- last error: {sys_err}"));
                 MB_ICONERROR
             },
             JvmError::ChildProcessExit(s) => {
                 title.push_str("ERROR BY NOTHINGS");
                 msg.push_str(
-                    &*format!("JVM未能正常退出！\n{err}",err=s));
+                    &format!("JVM未能正常退出！\n{err}",err=s));
                 MB_ICONERROR
             },
             Self::ExitCode(code, s) => {
-                title.push_str(&*format!("ERROR BY CODE : {code}"));
+                title.push_str(&format!("ERROR BY CODE : {code}"));
                 msg.push_str(s.as_str());
                 MB_ICONWARNING
             }
@@ -429,12 +431,12 @@ impl JvmError {
 }
 
 trait ErrorJvmExt<T> {
-    fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError>;
+    fn cache_failed(self,p:&Path,reason:&str) -> Result<T, JvmError>;
     fn launch_failed(self) -> Result<T, JvmError>;
 }
 
 impl<T, E> ErrorJvmExt<T> for Result<T, E> where E:Into< Box<dyn std::error::Error>> {
-    fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError> {
+    fn cache_failed(self,p:&Path,reason:&str) -> Result<T, JvmError> {
         self.map_err(|_| JvmError::cache_e(p, reason.to_string()))
     }
     fn launch_failed(self) -> Result<T, JvmError> {
