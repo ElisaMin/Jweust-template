@@ -7,6 +7,8 @@ mod logs;
 mod var;
 mod jvm;
 mod charsets;
+mod includes;
+
 use std::env::{args, current_dir};
 use std::fs::{create_dir_all};
 use std::iter::Iterator;

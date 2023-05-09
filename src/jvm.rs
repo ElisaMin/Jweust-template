@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::env::{args, var};
+use std::env::var;
 use std::fs::File;
 use std::{io, thread};
 use std::fmt::{Debug, Display, Formatter};
@@ -14,7 +14,7 @@ use jni::objects::{JString, JValue};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONWARNING, MB_OK};
 use crate::charsets::CharsetConverter;
 use crate::kotlin::ScopeFunc;
-use crate::{args_os_, exit, workdir};
+use crate::{args_os_, exit, includes, workdir};
 use crate::logs::LogFile;
 use crate::var::*;
 
@@ -95,7 +95,9 @@ impl Jvm {
             let after_commands = if let Some(main_class) = JAR_LAUNCHER_MAIN_CLASS {
                 vec![String::from(main_class)]
             } else {
-                vec![String::from("-jar"), String::from(jars.remove(JAR_LAUNCHER_FILE))]
+                let jar = jars.remove(JAR_LAUNCHER_FILE);
+                let jar = includes::jar_locate(jar);
+                vec!["-jar".into(), jar]
             };
             // push all jars
             let jars = jars.iter().map(|jar| jar.to_string()).collect::<Vec<String>>();
