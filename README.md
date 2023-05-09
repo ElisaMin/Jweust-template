@@ -20,9 +20,9 @@ to config var.rs
 ```rust
 #![allow(dead_code)]
 
-pub const HASH_OF_INCLUDE_JAR:Option<&'static str> = None;
+pub const HASH_OF_INCLUDE_JAR:Option<&'static str> =  Some("hashforjar");
 pub const APPLICATION_WITH_OUT_CLI:Option<Option<&'static str>> = Some(Some("-DConsolog=true"));
-pub const WORKDIR:Option<(&'static str,bool)> = None;
+pub const WORKDIR:Option<&'static str> = None;
 // pub const WORKDIR_IS_VARIABLE:bool = false;
 
 pub const LOG_STDERR_PATH:Option<(Option<&'static str>,bool)> = None;
