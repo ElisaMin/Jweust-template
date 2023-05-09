@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::env::{args, var};
+use std::env::var;
 use std::fs::File;
 use std::{io, thread};
 use std::fmt::{Debug, Display, Formatter};
@@ -241,7 +241,7 @@ impl Jvm {
             //     let _ = f.write_all(reason.as_bytes());
             // }
             let err = JvmError::exit_code(exit_code.status.code().unwrap_or(-1), reason);
-            Err(err.into())
+            Err(err)
         } else {
             Ok(())
         }
@@ -256,16 +256,14 @@ fn jvm_search_and_save(jvm_remember: &PathBuf) -> Result<(),JvmError> {
 
     let mut jvm = jvm.collect::<Vec<(PathBuf, String)>>();
 
-    if let Some((jvm, _)) = jvm.iter()
-        .filter(|(_, v)|
-            check_jvm_version(v, (&min_j, &max_j))
-        ).next()
-    {
+    if let Some((jvm, _)) = jvm.iter().find(|(_, v)|
+        check_jvm_version(v, (&min_j, &max_j))
+    ) {
         let jvm = jvm.clone();
         let jvm = jvm.to_string_lossy();
         let jvm = jvm.to_string();
 
-        File::create(&jvm_remember)
+        File::create(jvm_remember)
             .cache_failed(jvm_remember,"创建失败")?
             .write_all(jvm.as_ref())
             .cache_failed(jvm_remember,"写入失败")?;
@@ -284,7 +282,7 @@ fn jvm_search_and_save(jvm_remember: &PathBuf) -> Result<(),JvmError> {
         let min_j = if min_j < 6 { format!("{min_j}") } else { String::from("undefined") };
         let max_j = if max_j > 40 { format!("{max_j}") } else { String::from("unlimited") };
 
-        jvm.push_str(&*format!("but not in version supported jvm 's version : {}..{}", min_j, max_j));
+        jvm.push_str(&format!("but not in version supported jvm 's version : {}..{}", min_j, max_j));
         Err(JvmError::JvmNotFound(jvm))
     }
 }
@@ -391,18 +389,18 @@ impl JvmError {
                 MB_ICONERROR
             }
             Self::JvmCacheFailed(path,reason,sys_err) => {
-                title.push_str(&*format!("{path:?}"));
-                msg.push_str(&*format!("- cache failed: {reason}\n- last error: {sys_err}"));
+                title.push_str(&format!("{path:?}"));
+                msg.push_str(&format!("- cache failed: {reason}\n- last error: {sys_err}"));
                 MB_ICONERROR
             },
             JvmError::ChildProcessExit(s) => {
                 title.push_str("ERROR BY NOTHINGS");
                 msg.push_str(
-                    &*format!("JVM未能正常退出！\n{err}",err=s));
+                    &format!("JVM未能正常退出！\n{err}",err=s));
                 MB_ICONERROR
             },
             Self::ExitCode(code, s) => {
-                title.push_str(&*format!("ERROR BY CODE : {code}"));
+                title.push_str(&format!("ERROR BY CODE : {code}"));
                 msg.push_str(s.as_str());
                 MB_ICONWARNING
             }
