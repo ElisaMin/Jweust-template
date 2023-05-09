@@ -5,11 +5,11 @@ use std::{io, thread};
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{BufRead, BufReader, Error, Read, Write};
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use jni::errors::StartJvmResult;
-use jni::{InitArgsBuilder, JavaVM};
+use jni::{InitArgs, InitArgsBuilder, JavaVM};
 use jni::objects::{JString, JValue};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONWARNING, MB_OK};
 use crate::charsets::CharsetConverter;
@@ -307,12 +307,17 @@ fn test_commands() {
 }
 
 
-pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
+pub fn get_version_from_(path: &PathBuf) -> Result<String,JvmError> {
+    let p = get_dll_if_jvm_in_(path)
+        .ok_or(JvmError::JvmNotFound(String::from("not found")))?;
+    let i = InitArgsBuilder::default().build().launch_failed()?;
+    invoke_get_version(p,i).launch_failed()
+
+}
+fn invoke_get_version(validated:PathBuf,i:InitArgs) -> StartJvmResult<String> {
     let jvm = {
-        let i = InitArgsBuilder::default().build().unwrap();
-        JavaVM::with_libjvm(i, || {
-            Ok(get_dll_if_jvm_in_(path).unwrap())
-        })?
+        let validated = Ok(validated);
+        JavaVM::with_libjvm(i, || { validated })?
     };
     let jvm = &mut jvm.attach_current_thread()?;
     // System.getProperty("java.specification.version")
@@ -329,7 +334,6 @@ pub fn get_version_from_(path: &PathBuf) -> StartJvmResult<String> {
         param.to_string_lossy().to_string()
     }.transform(Ok)
 }
-
 
 fn get_dll_if_jvm_in_(path:&PathBuf) ->Option<PathBuf> {
     let p = path
@@ -372,9 +376,9 @@ impl JvmError {
     // pub fn jvm_not_found(errors: String) -> Self {
     //     Self::JvmNotFound(errors)
     // }
-    fn cache_e(p: &PathBuf, r: String) -> Self {
+    fn cache_e(p: &Path, r: String) -> Self {
         let sys_err = Error::last_os_error();
-        Self::JvmCacheFailed(p.clone(),r,sys_err)
+        Self::JvmCacheFailed(PathBuf::from(p), r, sys_err)
     }
     pub fn exit_code(code: i32, s: String) -> Self {
         Self::ExitCode(code, s)
@@ -425,12 +429,12 @@ impl JvmError {
 }
 
 trait ErrorJvmExt<T> {
-    fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError>;
+    fn cache_failed(self,p:&Path,reason:&str) -> Result<T, JvmError>;
     fn launch_failed(self) -> Result<T, JvmError>;
 }
 
 impl<T, E> ErrorJvmExt<T> for Result<T, E> where E:Into< Box<dyn std::error::Error>> {
-    fn cache_failed(self,p:&PathBuf,reason:&str) -> Result<T, JvmError> {
+    fn cache_failed(self,p:&Path,reason:&str) -> Result<T, JvmError> {
         self.map_err(|_| JvmError::cache_e(p, reason.to_string()))
     }
     fn launch_failed(self) -> Result<T, JvmError> {
